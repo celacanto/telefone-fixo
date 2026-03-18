@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Horarios — {{ device.child_name }}{% endblock %}
+{% block content %}
+<p class="text-muted mt-2 mb-3">Sem restricao, o telefone funciona o dia todo. Configure horarios para limitar o uso.</p>
+
+<form method="post">
+  <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+  {% for day in range(7) %}
+  {% set s = schedules.get(day) %}
+  {% set sh = s.start_time.split(':')[0]|int if s else 10 %}
+  {% set sm = s.start_time.split(':')[1]|int if s else 0 %}
+  {% set eh = s.end_time.split(':')[0]|int if s else 22 %}
+  {% set em = s.end_time.split(':')[1]|int if s else 0 %}
+  <div class="card mb-2 day-card {% if not s %}day-disabled{% endif %}">
+    <div class="card-body py-3">
+      <div class="d-flex justify-content-between align-items-center">
+        <h6 class="mb-0">{{ day_names[day] }}</h6>
+        <div class="form-check form-switch mb-0">
+          <input class="form-check-input" type="checkbox" role="switch"
+                 id="toggle_{{ day }}" name="enabled_{{ day }}" value="1"
+                 {% if s %}checked{% endif %}
+                 onchange="toggleDay({{ day }})">
+        </div>
+      </div>
+      <div class="row g-2 mt-2" id="times_{{ day }}"
+           style="{% if not s %}display:none{% endif %}">
+        <div class="col-6">
+          <label class="form-label small text-muted mb-1">Inicio</label>
+          <div class="d-flex align-items-center gap-1">
+            <select class="form-select" name="start_h_{{ day }}">
+              {% for h in range(24) %}
+              <option value="{{ '%02d'|format(h) }}" {% if h == sh %}selected{% endif %}>{{ '%02d'|format(h) }}</option>
+              {% endfor %}
+            </select>
+            <span class="fw-bold">:</span>
+            <select class="form-select" name="start_m_{{ day }}">
+              {% for m in [0, 15, 30, 45, 59] %}
+              <option value="{{ '%02d'|format(m) }}" {% if m == sm %}selected{% endif %}>{{ '%02d'|format(m) }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+        <div class="col-6">
+          <label class="form-label small text-muted mb-1">Fim</label>
+          <div class="d-flex align-items-center gap-1">
+            <select class="form-select" name="end_h_{{ day }}">
+              {% for h in range(24) %}
+              <option value="{{ '%02d'|format(h) }}" {% if h == eh %}selected{% endif %}>{{ '%02d'|format(h) }}</option>
+              {% endfor %}
+            </select>
+            <span class="fw-bold">:</span>
+            <select class="form-select" name="end_m_{{ day }}">
+              {% for m in [0, 15, 30, 45, 59] %}
+              <option value="{{ '%02d'|format(m) }}" {% if m == em %}selected{% endif %}>{{ '%02d'|format(m) }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+  <button type="submit" class="btn btn-primary w-100 mt-2 mb-4">Salvar horarios</button>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function toggleDay(day) {
+  const times = document.getElementById('times_' + day);
+  const card = times.closest('.day-card');
+  const checked = document.getElementById('toggle_' + day).checked;
+  times.style.display = checked ? '' : 'none';
+  card.classList.toggle('day-disabled', !checked);
+}
+</script>
+{% endblock %}

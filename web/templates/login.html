@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Login — Telefone Fixo{% endblock %}
+{% block content %}
+<div class="auth-card">
+  <div class="text-center mb-4">
+    <i class="bi bi-telephone-fill fs-1 text-primary"></i>
+    <h4 class="mt-2">Telefone Fixo</h4>
+  </div>
+  <div class="card">
+    <div class="card-body p-4">
+      <form method="post">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+        <div class="mb-3">
+          <label for="email" class="form-label">Email</label>
+          <input type="email" class="form-control form-control-lg" id="email" name="email" required autofocus>
+        </div>
+        <div class="mb-3">
+          <label for="password" class="form-label">Senha</label>
+          <input type="password" class="form-control form-control-lg" id="password" name="password" required>
+        </div>
+        <button type="submit" class="btn btn-primary btn-lg w-100">Entrar</button>
+      </form>
+      <div class="text-center mt-3">
+        <a href="{{ url_for('forgot_password') }}" class="text-muted small">Esqueceu a senha?</a>
+      </div>
+    </div>
+  </div>
+  <p class="text-center mt-3">
+    Recebeu um codigo? <a href="{{ url_for('activate') }}">Ativar aparelho</a>
+  </p>
+</div>
+{% endblock %}

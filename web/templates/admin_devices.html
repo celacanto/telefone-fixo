@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Admin — Aparelhos{% endblock %}
+{% block content %}
+<h2 class="mb-4">Administracao de aparelhos</h2>
+
+<h4>Criar novo aparelho</h4>
+<form method="post" class="row g-2 mb-4">
+  <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+  <div class="col-auto">
+    <input type="text" class="form-control" name="extension" placeholder="Ramal (ex: 003)"
+           pattern="[0-9]{3}" maxlength="3" required>
+  </div>
+  <div class="col-auto">
+    <input type="text" class="form-control" name="child_name" placeholder="Nome da crianca" required>
+  </div>
+  <div class="col-auto">
+    <button type="submit" class="btn btn-primary">Criar</button>
+  </div>
+</form>
+
+<h4>Aparelhos cadastrados</h4>
+<table class="table table-sm">
+  <thead>
+    <tr>
+      <th>Ramal</th>
+      <th>Crianca</th>
+      <th>Codigo</th>
+      <th>Vinculado a</th>
+      <th>Criado em</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for d in devices %}
+    <tr>
+      <td>{{ d.extension }}</td>
+      <td>{{ d.child_name }}</td>
+      <td><code>{{ d.registration_code }}</code></td>
+      <td>{{ d.owner_name or '(disponivel)' }}</td>
+      <td>{{ d.created_at }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<a href="{{ url_for('dashboard') }}" class="btn btn-link">Voltar</a>
+{% endblock %}

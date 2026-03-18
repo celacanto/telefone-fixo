@@ -1,0 +1,33 @@
+# Credenciais e chaves
+credenciais.md
+ssh-key-*.key
+*.pem
+.env
+
+# Banco de dados
+*.db
+*.db-wal
+*.db-shm
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+
+# Modelos TTS (grandes)
+web/deploy/grupo-audio/models/
+web/deploy/grupo-audio/mensagens/
+web/deploy/grupo-audio/mensagens-asterisk/
+web/deploy/grupo-audio/*.wav
+web/deploy/grupo-audio/*-piper.wav
+web/deploy/grupo-audio/*-jeff.wav
+web/deploy/grupo-audio/*-gtts.mp3
+
+# IDE
+.vscode/
+.idea/
+
+# Claude
+.claude/

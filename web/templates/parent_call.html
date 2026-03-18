@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% block title %}Familia — {{ device.child_name }}{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-md-8">
+
+    <h5 class="mb-3">Configurar ligacao para o celular da familia</h5>
+
+    <div class="card mb-3">
+      <div class="card-body">
+        <p>Permite que a crianca ligue para o celular da familia pelo telefone fixo.</p>
+        <p>Para funcionar, voce precisa instalar o app <strong>Groundwire</strong> no celular (R$50, compra unica):</p>
+        <div class="d-flex gap-2 mb-3">
+          <a href="https://play.google.com/store/apps/details?id=cz.acrobits.softphone.aliengroundwire" target="_blank" class="btn btn-outline-success btn-sm">
+            <i class="bi bi-google-play"></i> Play Store (Android)
+          </a>
+          <a href="https://apps.apple.com/us/app/groundwire-voip-sip-softphone/id378503081" target="_blank" class="btn btn-outline-dark btn-sm">
+            <i class="bi bi-apple"></i> App Store (iPhone)
+          </a>
+        </div>
+        <small class="text-muted">O Groundwire funciona em segundo plano e toca mesmo com o app fechado.</small>
+      </div>
+    </div>
+
+    {# ==================== CELULAR 1 ==================== #}
+    <h6 class="mt-4 mb-2">Celular 1</h6>
+
+    {% if device.parent_sip_extension %}
+    <div class="card mb-3 border-success">
+      <div class="card-body">
+        <h6 class="text-success"><i class="bi bi-check-circle-fill me-1"></i> Ativado</h6>
+
+        <p>Para {{ device.child_name }} ligar para este celular, discar no telefone fixo:</p>
+        <div class="text-center mb-3">
+          <span class="display-6 fw-bold">{{ device.parent_sip_extension }}#</span>
+        </div>
+
+        <p>Para voce ligar para {{ device.child_name }}, discar no Groundwire:</p>
+        <div class="text-center mb-3">
+          <span class="display-6 fw-bold">{{ device.extension }}</span>
+        </div>
+
+        <hr>
+
+        <h6>Configurar o Groundwire</h6>
+        <p>Abra o link abaixo no celular com o Groundwire instalado:</p>
+
+        <div class="text-center mb-3">
+          <img src="{{ url_for('parent_call_qr', device_id=device.id, slot=1) }}" alt="QR Code" class="img-fluid" style="max-width: 200px;">
+        </div>
+
+        <p class="text-center">
+          <a href="provlink://telefone-fixo.duckdns.org/provision/{{ device.parent_sip_token }}" class="btn btn-primary">
+            <i class="bi bi-box-arrow-up-right me-1"></i> Abrir no Groundwire
+          </a>
+        </p>
+
+        <small class="text-muted">
+          Ou configure manualmente: servidor <code>163.176.157.229</code>,
+          usuario <code>{{ device.parent_sip_extension }}</code>, transporte TCP.
+        </small>
+
+        <hr>
+
+        <form method="POST">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="action" value="deactivate">
+          <button type="submit" class="btn btn-outline-danger btn-sm"
+                  onclick="return confirm('Desativar celular 1?')">
+            <i class="bi bi-x-circle me-1"></i> Desativar
+          </button>
+        </form>
+      </div>
+    </div>
+
+    {% else %}
+    <div class="card mb-3">
+      <div class="card-body text-center">
+        <p class="text-muted">Celular 1 nao esta ativado.</p>
+        <form method="POST">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="action" value="activate">
+          <button type="submit" class="btn btn-primary">
+            <i class="bi bi-phone me-1"></i> Ativar celular 1
+          </button>
+        </form>
+      </div>
+    </div>
+    {% endif %}
+
+    {# ==================== CELULAR 2 ==================== #}
+    <h6 class="mt-4 mb-2">Celular 2</h6>
+
+    {% if device.parent2_sip_extension %}
+    <div class="card mb-3 border-success">
+      <div class="card-body">
+        <h6 class="text-success"><i class="bi bi-check-circle-fill me-1"></i> Ativado</h6>
+
+        <p>Para {{ device.child_name }} ligar para este celular, discar no telefone fixo:</p>
+        <div class="text-center mb-3">
+          <span class="display-6 fw-bold">{{ device.parent2_sip_extension }}#</span>
+        </div>
+
+        <p>Para voce ligar para {{ device.child_name }}, discar no Groundwire:</p>
+        <div class="text-center mb-3">
+          <span class="display-6 fw-bold">{{ device.extension }}</span>
+        </div>
+
+        <hr>
+
+        <h6>Configurar o Groundwire</h6>
+        <p>Abra o link abaixo no celular com o Groundwire instalado:</p>
+
+        <div class="text-center mb-3">
+          <img src="{{ url_for('parent_call_qr', device_id=device.id, slot=2) }}" alt="QR Code" class="img-fluid" style="max-width: 200px;">
+        </div>
+
+        <p class="text-center">
+          <a href="provlink://telefone-fixo.duckdns.org/provision/{{ device.parent2_sip_token }}" class="btn btn-primary">
+            <i class="bi bi-box-arrow-up-right me-1"></i> Abrir no Groundwire
+          </a>
+        </p>
+
+        <small class="text-muted">
+          Ou configure manualmente: servidor <code>163.176.157.229</code>,
+          usuario <code>{{ device.parent2_sip_extension }}</code>, transporte TCP.
+        </small>
+
+        <hr>
+
+        <form method="POST">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="action" value="deactivate2">
+          <button type="submit" class="btn btn-outline-danger btn-sm"
+                  onclick="return confirm('Desativar celular 2?')">
+            <i class="bi bi-x-circle me-1"></i> Desativar
+          </button>
+        </form>
+      </div>
+    </div>
+
+    {% else %}
+    <div class="card mb-3">
+      <div class="card-body text-center">
+        <p class="text-muted">Celular 2 nao esta ativado.</p>
+        <form method="POST">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="action" value="activate2">
+          <button type="submit" class="btn btn-primary">
+            <i class="bi bi-phone me-1"></i> Ativar celular 2
+          </button>
+        </form>
+      </div>
+    </div>
+    {% endif %}
+
+  </div>
+</div>
+{% endblock %}

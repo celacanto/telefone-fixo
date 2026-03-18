@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Meus aparelhos — Telefone Fixo{% endblock %}
+{% block content %}
+<h4 class="mb-3">Meus aparelhos</h4>
+
+{% if devices %}
+<div class="row g-3">
+  {% for d in devices %}
+  <div class="col-12 col-sm-6">
+    <div class="card">
+      <div class="card-body">
+        <h5 class="mb-1">{{ d.child_name }}</h5>
+        <p class="text-muted small mb-3">Ramal {{ d.extension }}</p>
+        <a href="{{ url_for('schedule', device_id=d.id) }}" class="btn btn-primary w-100">
+          Gerenciar <i class="bi bi-arrow-right"></i>
+        </a>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card">
+  <div class="card-body text-center py-4">
+    <i class="bi bi-telephone-plus fs-1 text-muted"></i>
+    <p class="mt-2 mb-3">Voce ainda nao tem aparelhos vinculados.</p>
+    <a href="{{ url_for('devices') }}" class="btn btn-success">Vincular aparelho</a>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

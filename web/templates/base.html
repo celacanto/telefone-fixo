@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Telefone Fixo{% endblock %}</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+  <link href="{{ url_for('static', filename='style.css') }}" rel="stylesheet">
+</head>
+<body>
+  {% if session.get('user_id') %}
+  <nav class="navbar navbar-dark bg-dark">
+    <div class="container">
+      <span class="navbar-brand mb-0">
+        {% if device %}
+          <i class="bi bi-telephone-fill me-1"></i> {{ device.child_name }}
+          <small class="text-secondary ms-1">({{ device.extension }})</small>
+        {% else %}
+          <i class="bi bi-telephone-fill me-1"></i> Telefone Fixo
+        {% endif %}
+      </span>
+      <div class="d-flex align-items-center gap-2">
+        {% if session.get('is_admin') %}
+        <a class="btn btn-outline-light btn-sm" href="{{ url_for('admin_devices') }}">Admin</a>
+        {% endif %}
+        <a class="btn btn-outline-danger btn-sm" href="{{ url_for('delete_account') }}">Excluir conta</a>
+        <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('logout') }}">Sair</a>
+      </div>
+    </div>
+  </nav>
+
+  {% if device %}
+  <nav class="navbar navbar-light bg-white border-bottom sticky-top">
+    <div class="container">
+      <ul class="nav nav-pills nav-fill w-100">
+        <li class="nav-item">
+          <a class="nav-link {% if active_tab == 'schedule' %}active{% endif %}"
+             href="{{ url_for('schedule', device_id=device.id) }}">
+            <i class="bi bi-clock"></i> <span class="d-none d-sm-inline">Horarios permitidos</span>
+          </a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link {% if active_tab == 'contacts' %}active{% endif %}"
+             href="{{ url_for('contacts', device_id=device.id) }}">
+            <i class="bi bi-people"></i> <span class="d-none d-sm-inline">Contatos</span>
+          </a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link {% if active_tab == 'logs' %}active{% endif %}"
+             href="{{ url_for('call_logs', device_id=device.id) }}">
+            <i class="bi bi-journal-text"></i> <span class="d-none d-sm-inline">Historico</span>
+          </a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link {% if active_tab == 'parent_call' %}active{% endif %}"
+             href="{{ url_for('parent_call', device_id=device.id) }}">
+            <i class="bi bi-phone"></i> <span class="d-none d-sm-inline">Ligacao para<br>celular da familia</span>
+          </a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link {% if active_tab == 'about' %}active{% endif %}"
+             href="{{ url_for('about') }}">
+            <i class="bi bi-info-circle"></i> <span class="d-none d-sm-inline">Sobre</span>
+          </a>
+        </li>
+      </ul>
+    </div>
+  </nav>
+  {% endif %}
+  {% endif %}
+
+  <div class="container mt-3">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for category, message in messages %}
+      <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+        {{ message }}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+      </div>
+      {% endfor %}
+    {% endif %}
+    {% endwith %}
+
+    {% block content %}{% endblock %}
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

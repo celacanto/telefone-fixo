@@ -1,0 +1,215 @@
+; =============================================================================
+; extensions.conf — Plano de discagem (versao com AGI + chamada em grupo)
+; Projeto: Telefone para criancas via internet
+; =============================================================================
+
+[general]
+static = yes
+writeprotect = no
+
+; -----------------------------------------------------------------------------
+; CONTEXTO PRINCIPAL: telefones-criancas
+; Todas as chamadas passam pelo AGI que consulta o banco de dados
+; -----------------------------------------------------------------------------
+[telefones-criancas]
+
+; Ramal 100 — Hora certa (sempre disponivel, nao passa pelo AGI)
+exten => 100,1,Answer()
+ same => n,Wait(1)
+ same => n,SayUnixTime(,,ABdY 'digits/at' IMp)
+ same => n,Hangup()
+
+; Ramal de familia — celular 1 (9 + 3 digitos) e celular 2 (8 + 3 digitos)
+exten => _9XXX,1,Goto(pai,${EXTEN},1)
+exten => _8XXX,1,Goto(pai,${EXTEN},1)
+
+[pai]
+exten => _XXXX,1,NoOp(Chamada para celular familia: ${CALLERID(num)} -> ${EXTEN})
+ same => n,AGI(check_call.py)
+ same => n,GotoIf($["${CALL_RESULT}" = "ALLOW"]?permitido)
+ same => n,Answer()
+ same => n,Playback(telefone/sem-permissao)
+ same => n,Hangup()
+ same => n(permitido),Set(CALL_DEST=${EXTEN})
+ same => n,Set(CALL_START=${EPOCH})
+ same => n,Dial(PJSIP/${EXTEN},60,rtT)
+ same => n,Set(CALL_DURATION=$[${EPOCH}-${CALL_START}])
+ same => n,AGI(log_call.py)
+ same => n,GotoIf($["${DIALSTATUS}" = "BUSY"]?ocupado)
+ same => n,GotoIf($["${DIALSTATUS}" = "NOANSWER"]?semresposta)
+ same => n,Hangup()
+ same => n(ocupado),Answer()
+ same => n,Playback(telefone/ocupado)
+ same => n,Hangup()
+ same => n(semresposta),Answer()
+ same => n,Playback(telefone/sem-resposta)
+ same => n,Hangup()
+
+exten => h,1,GotoIf($["${CALL_DEST}" = ""]?fim)
+ same => n,Set(CALL_DURATION=$[${EPOCH}-${CALL_START}])
+ same => n,AGI(log_call.py)
+ same => n(fim),NoOp(Pai hangup done)
+
+[telefones-criancas]
+
+; =========================================================================
+; Chamada aberta/grupo (0XXX) — permite outros entrarem na conversa
+; Discar 0067# em vez de 067# para abrir a chamada
+; Maximo 5 participantes, controlado pelo ConfBridge
+; =========================================================================
+exten => _0XXX,1,NoOp(Chamada aberta: ${CALLERID(num)} -> ${EXTEN:1})
+ same => n,Set(REAL_DEST=${EXTEN:1})
+ same => n,AGI(check_call.py,${REAL_DEST})
+ same => n,GotoIf($["${CALL_RESULT}" = "ALLOW"]?permitido)
+ ; Bloqueio — tocar mensagem especifica
+ same => n,Answer()
+ same => n,GotoIf($["${CALL_RESULT}" = "BLOCK_SCHEDULE_CALLER"]?msg_horario_caller)
+ same => n,GotoIf($["${CALL_RESULT}" = "BLOCK_SCHEDULE_DEST"]?msg_horario_dest)
+ same => n,GotoIf($["${CALL_RESULT}" = "BLOCK_PERMISSION"]?msg_permissao)
+ same => n,GotoIf($["${CALL_RESULT}" = "BLOCK_UNKNOWN"]?msg_invalido)
+ same => n,Playback(telefone/sem-permissao)
+ same => n,Hangup()
+ same => n(msg_horario_caller),Playback(telefone/horario-caller)
+ same => n,Hangup()
+ same => n(msg_horario_dest),Playback(telefone/horario-destino)
+ same => n,Hangup()
+ same => n(msg_permissao),Playback(telefone/sem-permissao)
+ same => n,Hangup()
+ same => n(msg_invalido),Playback(telefone/numero-invalido)
+ same => n,Hangup()
+ same => n(permitido),Set(CALL_DEST=${REAL_DEST})
+ same => n,Set(CALL_START=${EPOCH})
+ ; Criar sala de conferencia no AstDB
+ same => n,Set(CONF_ROOM=conf-${CALLERID(num)}-${EPOCH})
+ same => n,Set(DB(confbridge/${CALLERID(num)})=${CONF_ROOM})
+ same => n,Set(DB(confbridge/${REAL_DEST})=${CONF_ROOM})
+ same => n,Set(DB(confroom/${CONF_ROOM}/open)=1)
+ same => n,Set(DB(confroom/${CONF_ROOM}/members)=${CALLERID(num)},${REAL_DEST})
+ same => n,Set(DB(confroom/${CONF_ROOM}/count)=2)
+ ; Discar destino — ao atender, ambos vao para ConfBridge via opcao G
+ same => n,Dial(PJSIP/${REAL_DEST},60,rG(conf-join^${CONF_ROOM}^1))
+ ; Se Dial falhou (ocupado, sem resposta, etc.) — limpar AstDB
+ same => n,Set(CALL_DURATION=$[${EPOCH}-${CALL_START}])
+ same => n,AGI(log_call.py)
+ same => n,DBdel(confbridge/${CALLERID(num)})
+ same => n,DBdel(confbridge/${REAL_DEST})
+ same => n,DBdeltree(confroom/${CONF_ROOM})
+ same => n,GotoIf($["${DIALSTATUS}" = "BUSY"]?ocupado)
+ same => n,GotoIf($["${DIALSTATUS}" = "NOANSWER"]?semresposta)
+ same => n,Hangup()
+ same => n(ocupado),Answer()
+ same => n,Playback(telefone/ocupado)
+ same => n,Hangup()
+ same => n(semresposta),Answer()
+ same => n,Playback(telefone/sem-resposta)
+ same => n,Hangup()
+
+; =========================================================================
+; Qualquer ramal de 3 digitos — com suporte a entrar em chamada em grupo
+; Se o destino esta em conferencia aberta e caller tem permissao com todos,
+; entra na conferencia. Senao, chamada privada normal.
+; =========================================================================
+exten => _XXX,1,NoOp(Chamada de ${CALLERID(num)} para ${EXTEN})
+ same => n,AGI(check_call.py)
+ same => n,GotoIf($["${CALL_RESULT}" = "ALLOW"]?permitido)
+ ; Bloqueio — tocar mensagem especifica por tipo
+ same => n,Answer()
+ same => n,GotoIf($["${CALL_RESULT}" = "BLOCK_SCHEDULE_CALLER"]?msg_horario_caller)
+ same => n,GotoIf($["${CALL_RESULT}" = "BLOCK_SCHEDULE_DEST"]?msg_horario_dest)
+ same => n,GotoIf($["${CALL_RESULT}" = "BLOCK_PERMISSION"]?msg_permissao)
+ same => n,GotoIf($["${CALL_RESULT}" = "BLOCK_UNKNOWN"]?msg_invalido)
+ same => n,Playback(telefone/sem-permissao)
+ same => n,Hangup()
+ same => n(msg_horario_caller),Playback(telefone/horario-caller)
+ same => n,Hangup()
+ same => n(msg_horario_dest),Playback(telefone/horario-destino)
+ same => n,Hangup()
+ same => n(msg_permissao),Playback(telefone/sem-permissao)
+ same => n,Hangup()
+ same => n(msg_invalido),Playback(telefone/numero-invalido)
+ same => n,Hangup()
+ same => n(permitido),Set(CALL_DEST=${EXTEN})
+ same => n,Set(CALL_START=${EPOCH})
+ ; Verificar se destino esta em conferencia aberta
+ same => n,Set(DEST_CONF=${DB(confbridge/${EXTEN})})
+ same => n,GotoIf($["${DEST_CONF}" = ""]?chamada_normal)
+ same => n,GotoIf($["${DB(confroom/${DEST_CONF}/open)}" != "1"]?dest_ocupado)
+ ; Destino em conferencia aberta — verificar permissoes com todos do grupo
+ same => n,Set(CONF_MEMBERS=${DB(confroom/${DEST_CONF}/members)})
+ same => n,Set(CONF_COUNT=${DB(confroom/${DEST_CONF}/count)})
+ same => n,GotoIf($[${CONF_COUNT} >= 5]?conf_lotada)
+ same => n,AGI(check_group.py)
+ same => n,GotoIf($["${GROUP_RESULT}" = "ALLOW"]?entrar_grupo)
+ same => n,Answer()
+ same => n,Playback(telefone/sem-permissao-grupo)
+ same => n,Hangup()
+ same => n(conf_lotada),Answer()
+ same => n,Playback(telefone/chamada-cheia)
+ same => n,Hangup()
+ same => n(entrar_grupo),Answer()
+ same => n,Playback(grupo/entrando-${CONF_COUNT})
+ ; Adicionar ao rastreamento da conferencia
+ same => n,Set(DB(confbridge/${CALLERID(num)})=${DEST_CONF})
+ same => n,Set(DB(confroom/${DEST_CONF}/members)=${CONF_MEMBERS},${CALLERID(num)})
+ same => n,Set(DB(confroom/${DEST_CONF}/count)=$[${CONF_COUNT}+1])
+ ; Entrar na conferencia
+ same => n,ConfBridge(${DEST_CONF},telefone_bridge,telefone_user)
+ ; Apos sair da conferencia — limpar (idempotente)
+ same => n,AGI(conf_leave.py)
+ same => n,Hangup()
+ ; --- Chamada normal (privada) ---
+ same => n(chamada_normal),Dial(PJSIP/${EXTEN},60,rtT)
+ same => n,Set(CALL_DURATION=$[${EPOCH}-${CALL_START}])
+ same => n,AGI(log_call.py)
+ same => n,GotoIf($["${DIALSTATUS}" = "BUSY"]?ocupado)
+ same => n,GotoIf($["${DIALSTATUS}" = "NOANSWER"]?semresposta)
+ same => n,Hangup()
+ same => n(ocupado),Answer()
+ same => n,Playback(telefone/ocupado)
+ same => n,Hangup()
+ same => n(semresposta),Answer()
+ same => n,Playback(telefone/sem-resposta)
+ same => n,Hangup()
+ same => n(dest_ocupado),Answer()
+ same => n,Playback(telefone/ocupado)
+ same => n,Hangup()
+
+; Hangup handler — limpa conferencia (se aplicavel) e loga a chamada
+exten => h,1,AGI(conf_leave.py)
+ same => n,GotoIf($["${CALL_DEST}" = ""]?fim)
+ same => n,Set(CALL_DURATION=$[${EPOCH}-${CALL_START}])
+ same => n,AGI(log_call.py)
+ same => n(fim),NoOp(Hangup handler finalizado)
+
+; Bloqueio: qualquer outro numero e recusado
+exten => _X.,1,NoOp(Numero bloqueado: ${EXTEN})
+ same => n,Answer()
+ same => n,Playback(telefone/numero-invalido)
+ same => n,Hangup()
+
+; Extensao invalida
+exten => i,1,NoOp(Extensao invalida)
+ same => n,Answer()
+ same => n,Playback(telefone/numero-invalido)
+ same => n,Hangup()
+
+; =============================================================================
+; CONTEXTO: conf-join
+; Ambos os canais (caller e called) chegam aqui apos Dial() com opcao G.
+; O called vai para prioridade 1, o caller para prioridade 2.
+; =============================================================================
+[conf-join]
+exten => _!,1,Goto(enter)
+ same => 2,Goto(enter)
+ same => n(enter),GotoIf($["${CALL_START}" != ""]?tem_start)
+ same => n,Set(CALL_START=${EPOCH})
+ same => n,Set(CALL_DEST=GRUPO)
+ same => n(tem_start),ConfBridge(${EXTEN},telefone_bridge,telefone_user)
+ same => n,AGI(conf_leave.py)
+ same => n,Hangup()
+
+exten => h,1,AGI(conf_leave.py)
+ same => n,GotoIf($["${CALL_DEST}" = ""]?fim)
+ same => n,Set(CALL_DURATION=$[${EPOCH}-${CALL_START}])
+ same => n,AGI(log_call.py)
+ same => n(fim),NoOp(Conf hangup done)

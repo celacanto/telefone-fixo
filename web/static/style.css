@@ -1,0 +1,79 @@
+/* style.css — Telefone Fixo portal */
+
+body {
+  background-color: #f8f9fa;
+  font-size: 16px;
+}
+
+/* Nav pills tabs */
+.nav-pills .nav-link {
+  color: #495057;
+  border-radius: 0;
+  padding: 0.75rem 1rem;
+  font-size: 0.95rem;
+}
+.nav-pills .nav-link.active {
+  background-color: transparent;
+  color: #0d6efd;
+  border-bottom: 3px solid #0d6efd;
+  font-weight: 600;
+}
+.nav-pills .nav-link:hover:not(.active) {
+  color: #0d6efd;
+}
+
+/* Cards */
+.card {
+  border: none;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+
+/* Schedule day cards */
+.day-card {
+  transition: box-shadow 0.15s;
+}
+.day-card.day-disabled {
+  opacity: 0.5;
+}
+
+/* Form controls larger for touch */
+.form-control-lg, .btn-lg {
+  min-height: 48px;
+}
+
+/* Contact cards */
+.contact-card {
+  border-left: 4px solid transparent;
+}
+.contact-card.status-can_call { border-left-color: #198754; }
+.contact-card.status-waiting_other { border-left-color: #0dcaf0; }
+.contact-card.status-waiting_you { border-left-color: #ffc107; }
+.contact-card.status-blocked { border-left-color: #6c757d; }
+
+/* Call log items */
+.log-item {
+  border-left: 4px solid transparent;
+}
+.log-item.log-allowed { border-left-color: #198754; }
+.log-item.log-blocked { border-left-color: #dc3545; }
+.log-item.log-other { border-left-color: #ffc107; }
+
+/* Badge sizing */
+.badge {
+  font-weight: 500;
+  padding: 0.4em 0.7em;
+}
+
+/* Auth pages centered */
+.auth-card {
+  max-width: 420px;
+  margin: 2rem auto;
+}
+
+/* Hide tab text on very small screens, show icon only */
+@media (max-width: 360px) {
+  .nav-pills .nav-link span {
+    display: none !important;
+  }
+}

@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Contatos — {{ device.child_name }}{% endblock %}
+{% block content %}
+<p class="text-muted mt-2 mb-3">
+  Para uma chamada funcionar, ambos os lados precisam autorizar.
+</p>
+
+{% if contacts %}
+  {% for c in contacts %}
+  <div class="card mb-2 contact-card status-{{ c.status }}">
+    <div class="card-body py-3">
+      <div class="d-flex justify-content-between align-items-center">
+        <div>
+          <h6 class="mb-1">{{ c.child_name }}</h6>
+          <small class="text-muted">Ramal {{ c.extension }}</small>
+        </div>
+        <div class="text-end">
+          {% if c.status == 'can_call' %}
+            <span class="badge bg-success mb-2 d-block">Pode ligar</span>
+          {% elif c.status == 'waiting_other' %}
+            <span class="badge bg-info text-dark mb-2 d-block">Aguardando outro lado</span>
+          {% elif c.status == 'waiting_you' %}
+            <span class="badge bg-warning text-dark mb-2 d-block">Aguardando sua autorizacao</span>
+          {% else %}
+            <span class="badge bg-secondary mb-2 d-block">Bloqueado</span>
+          {% endif %}
+          <form method="post" class="d-inline">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="extension" value="{{ c.extension }}">
+            {% if c.i_allow %}
+              <input type="hidden" name="action" value="remove">
+              <button type="submit" class="btn btn-outline-danger btn-sm">Remover</button>
+            {% else %}
+              <input type="hidden" name="action" value="add">
+              <button type="submit" class="btn btn-outline-success btn-sm">Autorizar</button>
+            {% endif %}
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+{% else %}
+  <div class="card">
+    <div class="card-body text-center text-muted py-4">
+      Nenhum outro aparelho cadastrado no sistema ainda.
+    </div>
+  </div>
+{% endif %}
+{% endblock %}
