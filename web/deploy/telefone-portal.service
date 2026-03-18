@@ -1,5 +1,5 @@
 [Unit]
-Description=Telefone Fixo - Portal Web para Pais
+Description=Telefone Fixo - Portal Web
 After=network.target
 
 [Service]
@@ -9,8 +9,10 @@ Group=www-data
 WorkingDirectory=/opt/telefone-portal
 Environment=TELEFONE_DB_PATH=/opt/telefone-portal/data/telefone.db
 Environment=TELEFONE_SECRET_KEY=TROCAR_POR_CHAVE_SECRETA
-Environment=TELEFONE_SMTP_USER=rede.telefonefixo@gmail.com
-Environment="TELEFONE_SMTP_PASSWORD=kpjy dlya aoml scoi"
+Environment=TELEFONE_SMTP_USER=TROCAR_POR_SEU_EMAIL
+Environment=TELEFONE_SMTP_PASSWORD=TROCAR_POR_SUA_SENHA_DE_APP
+Environment=TELEFONE_VPS_IP=TROCAR_POR_IP_DO_VPS
+Environment=TELEFONE_SITE_URL=https://seu-dominio.duckdns.org
 ExecStart=/opt/telefone-portal/venv/bin/python -m flask run --host=127.0.0.1 --port=5000
 Restart=always
 RestartSec=5

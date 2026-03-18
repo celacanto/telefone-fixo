@@ -51,13 +51,13 @@
         </div>
 
         <p class="text-center">
-          <a href="provlink://telefone-fixo.duckdns.org/provision/{{ device.parent_sip_token }}" class="btn btn-primary">
+          <a href="provlink://{{ config.SITE_URL.replace('https://', '').replace('http://', '') }}/provision/{{ device.parent_sip_token }}" class="btn btn-primary">
             <i class="bi bi-box-arrow-up-right me-1"></i> Abrir no Groundwire
           </a>
         </p>
 
         <small class="text-muted">
-          Ou configure manualmente: servidor <code>163.176.157.229</code>,
+          Ou configure manualmente: servidor <code>{{ config.VPS_IP }}</code>,
           usuario <code>{{ device.parent_sip_extension }}</code>, transporte TCP.
         </small>
 
@@ -117,13 +117,13 @@
         </div>
 
         <p class="text-center">
-          <a href="provlink://telefone-fixo.duckdns.org/provision/{{ device.parent2_sip_token }}" class="btn btn-primary">
+          <a href="provlink://{{ config.SITE_URL.replace('https://', '').replace('http://', '') }}/provision/{{ device.parent2_sip_token }}" class="btn btn-primary">
             <i class="bi bi-box-arrow-up-right me-1"></i> Abrir no Groundwire
           </a>
         </p>
 
         <small class="text-muted">
-          Ou configure manualmente: servidor <code>163.176.157.229</code>,
+          Ou configure manualmente: servidor <code>{{ config.VPS_IP }}</code>,
           usuario <code>{{ device.parent2_sip_extension }}</code>, transporte TCP.
         </small>
 

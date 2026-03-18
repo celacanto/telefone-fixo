@@ -20,8 +20,8 @@
 set -euo pipefail
 
 # --- Configurações fixas ---
-VPS_IP="163.176.157.229"
-SSH_KEY="$(dirname "$0")/ssh-key-2026-03-02.key"
+VPS_IP="${TELEFONE_VPS_IP:?Defina TELEFONE_VPS_IP com o IP do seu VPS}"
+SSH_KEY="${TELEFONE_SSH_KEY:-$(dirname "$0")/ssh-key.key}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # --- Cores ---

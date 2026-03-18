@@ -1,8 +1,11 @@
-# Credenciais e chaves
+# Credenciais e chaves — NUNCA commitar
 credenciais.md
 ssh-key-*.key
 *.pem
 .env
+
+# CLAUDE.md contem dados da instalacao real — nao publicar
+CLAUDE.md
 
 # Banco de dados
 *.db

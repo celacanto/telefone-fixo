@@ -21,7 +21,7 @@ sudo mkdir -p "$AGI_DIR"
 
 echo "=== Copiando arquivos do portal ==="
 # Estes arquivos devem ser transferidos via scp antes de rodar este script
-# scp -i ssh-key-2026-03-02.key -r web/* ubuntu@163.176.157.229:/tmp/portal/
+# scp -i SUA_CHAVE_SSH -r web/* usuario@IP_DO_VPS:/tmp/portal/
 if [ -d /tmp/portal ]; then
     sudo cp /tmp/portal/app.py "$PORTAL_DIR/"
     sudo cp /tmp/portal/models.py "$PORTAL_DIR/"
@@ -34,7 +34,7 @@ if [ -d /tmp/portal ]; then
     sudo cp /tmp/portal/migrate.py "$PORTAL_DIR/"
 else
     echo "ERRO: Copie os arquivos para /tmp/portal/ primeiro."
-    echo "  scp -i ssh-key-2026-03-02.key -r web/* ubuntu@IP:/tmp/portal/"
+    echo "  scp -i SUA_CHAVE_SSH -r web/* usuario@IP_DO_VPS:/tmp/portal/"
     exit 1
 fi
 
@@ -42,8 +42,13 @@ echo "=== Criando venv e instalando Flask ==="
 sudo python3 -m venv "$VENV_DIR"
 sudo "$VENV_DIR/bin/pip" install -q -r "$PORTAL_DIR/requirements.txt"
 
-echo "=== Gerando SECRET_KEY ==="
+echo "=== Configurando credenciais ==="
 SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+read -p "Email SMTP (Gmail): " SMTP_USER
+read -sp "Senha de app SMTP: " SMTP_PASS
+echo ""
+read -p "IP publico do VPS: " VPS_IP
+read -p "Dominio (ex: meu-telefone.duckdns.org): " SITE_DOMAIN
 
 echo "=== Configurando systemd ==="
 sudo tee /etc/systemd/system/telefone-portal.service > /dev/null <<EOF
@@ -58,8 +63,10 @@ Group=www-data
 WorkingDirectory=$PORTAL_DIR
 Environment=TELEFONE_DB_PATH=$DATA_DIR/telefone.db
 Environment=TELEFONE_SECRET_KEY=$SECRET_KEY
-Environment=TELEFONE_SMTP_USER=rede.telefonefixo@gmail.com
-Environment="TELEFONE_SMTP_PASSWORD=kpjy dlya aoml scoi"
+Environment=TELEFONE_SMTP_USER=$SMTP_USER
+Environment=TELEFONE_SMTP_PASSWORD=$SMTP_PASS
+Environment=TELEFONE_VPS_IP=$VPS_IP
+Environment=TELEFONE_SITE_URL=https://$SITE_DOMAIN
 Environment=FLASK_APP=app.py
 ExecStart=$VENV_DIR/bin/python -m flask run --host=127.0.0.1 --port=5000
 Restart=always

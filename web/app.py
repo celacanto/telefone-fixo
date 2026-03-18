@@ -132,7 +132,7 @@ def datahora_filter(value):
 
 @app.context_processor
 def inject_globals():
-    return {'day_names': DAY_NAMES, 'csrf_token': generate_csrf_token}
+    return {'day_names': DAY_NAMES, 'csrf_token': generate_csrf_token, 'config': config}
 
 
 # --- Auth routes ---
@@ -775,7 +775,7 @@ def parent_call_qr(device_id, slot):
         abort(404)
     if not token:
         abort(404)
-    url = f"provlink://telefone-fixo.duckdns.org/provision/{token}"
+    url = f"provlink://{config.SITE_URL.replace('https://', '').replace('http://', '')}/provision/{token}"
     img = qrcode.make(url, box_size=6, border=2)
     buf = io.BytesIO()
     img.save(buf, format='PNG')
@@ -807,7 +807,7 @@ def provision(token):
   <title>Telefone {device['child_name']}</title>
   <username>{ext}</username>
   <password>{pwd}</password>
-  <host>163.176.157.229</host>
+  <host>{config.VPS_IP}</host>
   <transport>tcp</transport>
   <expires>120</expires>
 </account>"""
