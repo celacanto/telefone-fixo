@@ -34,3 +34,6 @@ web/deploy/grupo-audio/*-gtts.mp3
 
 # Claude
 .claude/
+ssh-key-2026-03-02.key
+ssh-key-2026-03-02.key.pub
+credenciais.md
