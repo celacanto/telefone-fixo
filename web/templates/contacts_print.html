@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Contatos — {{ device.child_name }}</title>
+  <style>
+    @page { margin: 1.5cm; }
+    body {
+      font-family: Arial, Helvetica, sans-serif;
+      color: #222;
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    h1 {
+      font-size: 22px;
+      margin-bottom: 4px;
+    }
+    .subtitle {
+      color: #666;
+      font-size: 14px;
+      margin-bottom: 24px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    th {
+      text-align: left;
+      font-size: 12px;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: 6px 12px;
+      border-bottom: 2px solid #ddd;
+    }
+    td {
+      padding: 10px 12px;
+      border-bottom: 1px solid #eee;
+      font-size: 16px;
+    }
+    td.ext {
+      font-size: 20px;
+      font-weight: bold;
+      font-family: 'Courier New', monospace;
+      width: 100px;
+    }
+    .tip {
+      margin-top: 24px;
+      padding: 12px;
+      background: #f8f8f8;
+      border-radius: 6px;
+      font-size: 13px;
+      color: #555;
+    }
+    @media print {
+      body { padding: 0; }
+      .no-print { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <h1>Contatos de {{ device.child_name }}</h1>
+  <p class="subtitle">Ramal {{ device.extension }} — Sempre discar o número e depois #</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Nome</th>
+        <th>Número</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in contacts %}
+      <tr>
+        <td>{{ c.name }}</td>
+        <td class="ext">{{ c.extension }}#</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% if contacts %}
+  <div class="tip">
+    Para ligar: tire o telefone do gancho, disque o número e aperte <strong>#</strong>.
+  </div>
+  {% endif %}
+
+  <p class="no-print" style="margin-top: 20px; text-align: center;">
+    <button onclick="window.print()" style="padding: 10px 24px; font-size: 16px; cursor: pointer;">
+      Imprimir
+    </button>
+  </p>
+</body>
+</html>

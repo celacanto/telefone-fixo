@@ -5,6 +5,19 @@
   Para uma chamada funcionar, ambos os lados precisam autorizar.
 </p>
 
+<div class="card mb-3 border-primary bg-light">
+  <div class="card-body py-3 d-flex justify-content-between align-items-center">
+    <div>
+      <i class="bi bi-printer me-1"></i>
+      <strong>Lista para deixar perto do telefone</strong>
+      <br><small class="text-muted">Imprime os contatos autorizados com os ramais</small>
+    </div>
+    <a href="{{ url_for('contacts_print', device_id=device.id) }}" target="_blank" class="btn btn-primary">
+      Imprimir
+    </a>
+  </div>
+</div>
+
 {% if contacts %}
   {% for c in contacts %}
   <div class="card mb-2 contact-card status-{{ c.status }}">

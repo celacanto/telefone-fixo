@@ -64,14 +64,21 @@ def main():
 
     now = datetime.now(TIMEZONE).strftime('%Y-%m-%d %H:%M:%S')
 
-    agi_verbose(f'log_call: {caller} -> {destination} status={status} duration={duration}')
+    # Para chamadas em grupo, ler detalhe dos participantes
+    block_reason = None
+    if destination == 'GRUPO':
+        grupo_detalhe = agi_get_variable('GRUPO_DETALHE')
+        if grupo_detalhe:
+            block_reason = grupo_detalhe
+
+    agi_verbose(f'log_call: {caller} -> {destination} status={status} duration={duration} detalhe={block_reason}')
 
     try:
         conn = sqlite3.connect(DB_PATH, timeout=5)
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute(
-            "INSERT INTO call_logs (caller_ext, callee_ext, timestamp, status, duration_seconds) VALUES (?, ?, ?, ?, ?)",
-            (caller, destination, now, status, duration)
+            "INSERT INTO call_logs (caller_ext, callee_ext, timestamp, status, duration_seconds, block_reason) VALUES (?, ?, ?, ?, ?, ?)",
+            (caller, destination, now, status, duration, block_reason)
         )
         conn.commit()
         conn.close()

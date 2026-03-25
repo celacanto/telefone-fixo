@@ -8,15 +8,23 @@ static = yes
 writeprotect = no
 
 ; -----------------------------------------------------------------------------
+; CONTEXTO: set-jitterbuffer
+; Aplica jitter buffer adaptativo no lado chamado (called party)
+; -----------------------------------------------------------------------------
+[set-jitterbuffer]
+exten => s,1,Set(JITTERBUFFER(adaptive)=200,1000,40)
+ same => n,Return()
+
+; -----------------------------------------------------------------------------
 ; CONTEXTO PRINCIPAL: telefones-criancas
 ; Todas as chamadas passam pelo AGI que consulta o banco de dados
 ; -----------------------------------------------------------------------------
 [telefones-criancas]
 
-; Ramal 100 — Hora certa (sempre disponivel, nao passa pelo AGI)
+; Ramal 100 — Hora certa em portugues (sempre disponivel, nao passa pelo AGI)
 exten => 100,1,Answer()
  same => n,Wait(1)
- same => n,SayUnixTime(,,ABdY 'digits/at' IMp)
+ same => n,AGI(hora_certa.py)
  same => n,Hangup()
 
 ; Ramal de familia — celular 1 (9 + 3 digitos) e celular 2 (8 + 3 digitos)
@@ -32,7 +40,8 @@ exten => _XXXX,1,NoOp(Chamada para celular familia: ${CALLERID(num)} -> ${EXTEN}
  same => n,Hangup()
  same => n(permitido),Set(CALL_DEST=${EXTEN})
  same => n,Set(CALL_START=${EPOCH})
- same => n,Dial(PJSIP/${EXTEN},60,rtT)
+ same => n,Set(JITTERBUFFER(adaptive)=200,1000,40)
+ same => n,Dial(PJSIP/${EXTEN},60,rtTb(set-jitterbuffer^s^1))
  same => n,Set(CALL_DURATION=$[${EPOCH}-${CALL_START}])
  same => n,AGI(log_call.py)
  same => n,GotoIf($["${DIALSTATUS}" = "BUSY"]?ocupado)
@@ -86,8 +95,12 @@ exten => _0XXX,1,NoOp(Chamada aberta: ${CALLERID(num)} -> ${EXTEN:1})
  same => n,Set(DB(confroom/${CONF_ROOM}/open)=1)
  same => n,Set(DB(confroom/${CONF_ROOM}/members)=${CALLERID(num)},${REAL_DEST})
  same => n,Set(DB(confroom/${CONF_ROOM}/count)=2)
+ same => n,Set(DB(confroom/${CONF_ROOM}/all_members)=${CALLERID(num)},${REAL_DEST})
+ same => n,Set(DB(confroom/${CONF_ROOM}/join/${CALLERID(num)})=${EPOCH})
+ same => n,Set(DB(confroom/${CONF_ROOM}/join/${REAL_DEST})=${EPOCH})
  ; Discar destino — ao atender, ambos vao para ConfBridge via opcao G
- same => n,Dial(PJSIP/${REAL_DEST},60,rG(conf-join^${CONF_ROOM}^1))
+ same => n,Set(JITTERBUFFER(adaptive)=200,1000,40)
+ same => n,Dial(PJSIP/${REAL_DEST},60,rG(conf-join^${CONF_ROOM}^1)b(set-jitterbuffer^s^1))
  ; Se Dial falhou (ocupado, sem resposta, etc.) — limpar AstDB
  same => n,Set(CALL_DURATION=$[${EPOCH}-${CALL_START}])
  same => n,AGI(log_call.py)
@@ -152,13 +165,17 @@ exten => _XXX,1,NoOp(Chamada de ${CALLERID(num)} para ${EXTEN})
  same => n,Set(DB(confbridge/${CALLERID(num)})=${DEST_CONF})
  same => n,Set(DB(confroom/${DEST_CONF}/members)=${CONF_MEMBERS},${CALLERID(num)})
  same => n,Set(DB(confroom/${DEST_CONF}/count)=$[${CONF_COUNT}+1])
+ same => n,Set(PREV_ALL=${DB(confroom/${DEST_CONF}/all_members)})
+ same => n,Set(DB(confroom/${DEST_CONF}/all_members)=${PREV_ALL},${CALLERID(num)})
+ same => n,Set(DB(confroom/${DEST_CONF}/join/${CALLERID(num)})=${EPOCH})
  ; Entrar na conferencia
  same => n,ConfBridge(${DEST_CONF},telefone_bridge,telefone_user)
  ; Apos sair da conferencia — limpar (idempotente)
  same => n,AGI(conf_leave.py)
  same => n,Hangup()
  ; --- Chamada normal (privada) ---
- same => n(chamada_normal),Dial(PJSIP/${EXTEN},60,rtT)
+ same => n(chamada_normal),Set(JITTERBUFFER(adaptive)=200,1000,40)
+ same => n,Dial(PJSIP/${EXTEN},60,rtTb(set-jitterbuffer^s^1))
  same => n,Set(CALL_DURATION=$[${EPOCH}-${CALL_START}])
  same => n,AGI(log_call.py)
  same => n,GotoIf($["${DIALSTATUS}" = "BUSY"]?ocupado)

@@ -3,6 +3,42 @@
 {% block content %}
 
 {% if logs %}
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <small class="text-muted">
+      {{ total }} ligacao{{ 'es' if total != 1 else '' }}
+      — {% if total_duration >= 3600 %}{{ (total_duration // 3600) }}h {{ ((total_duration % 3600) // 60) }}min{% elif total_duration >= 60 %}{{ (total_duration // 60) }}min {{ total_duration % 60 }}s{% else %}{{ total_duration }}s{% endif %} no total
+    </small>
+    {% if total_pages > 1 %}
+      <small class="text-muted">Pagina {{ page }} de {{ total_pages }}</small>
+    {% endif %}
+  </div>
+
+  <!-- Botao do grafico -->
+  <div class="mb-3">
+    <button class="btn btn-sm btn-primary" type="button" id="btnToggleChart" style="border-radius:20px;padding:6px 16px;">
+      <i class="bi bi-bar-chart-horizontal me-1"></i> Ver grafico
+    </button>
+  </div>
+
+  <!-- Area do grafico (colapsavel) -->
+  <div id="chartArea" style="display:none;">
+    <div class="card mb-3">
+      <div class="card-body">
+        <div class="btn-group btn-group-sm mb-3" role="group">
+          <button class="btn btn-outline-secondary active" data-period="week">Ultima semana</button>
+          <button class="btn btn-outline-secondary" data-period="month">Ultimo mes</button>
+          <button class="btn btn-outline-secondary" data-period="all">Tudo</button>
+        </div>
+        <div id="chartContainer" style="position:relative;width:100%;">
+          <canvas id="chartTempo"></canvas>
+        </div>
+        <div id="chartEmpty" class="text-center text-muted py-3 d-none">
+          Sem dados para este periodo.
+        </div>
+      </div>
+    </div>
+  </div>
+
   {% for l in logs %}
   <div class="card mb-2 log-item {% if l.status == 'BLOCKED' %}log-blocked{% elif l.status == 'ALLOWED' %}log-allowed{% else %}log-other{% endif %}">
     <div class="card-body py-3">
@@ -23,9 +59,13 @@
         {% endif %}
       </div>
       <div class="d-flex align-items-center gap-2">
-        <span><strong>{{ l.caller_ext }}</strong></span>
+        <span><strong>{{ ext_names.get(l.caller_ext, l.caller_ext) }}</strong></span>
         <i class="bi bi-arrow-right text-muted"></i>
-        <span><strong>{{ l.callee_ext }}</strong></span>
+        {% if l.callee_ext == 'GRUPO' %}
+          <span><strong>Chamada em grupo</strong></span>
+        {% else %}
+          <span><strong>{{ ext_names.get(l.callee_ext, l.callee_ext) }}</strong></span>
+        {% endif %}
         {% if l.duration_seconds and l.status == 'ALLOWED' %}
           <span class="text-muted ms-auto">
             <i class="bi bi-stopwatch"></i>
@@ -37,9 +77,53 @@
           </span>
         {% endif %}
       </div>
+      {% if l.callee_ext == 'GRUPO' and l.block_reason %}
+        <div class="mt-1">
+          {% for part in l.block_reason.split(',') %}
+            {% set ext = part.split(':')[0] %}
+            {% set secs = part.split(':')[1]|int %}
+            <small class="text-muted me-3">
+              <i class="bi bi-person"></i>
+              {{ ext_names.get(ext, ext) }}:
+              {% if secs >= 60 %}
+                {{ (secs // 60) }}min {{ secs % 60 }}s
+              {% else %}
+                {{ secs }}s
+              {% endif %}
+            </small>
+          {% endfor %}
+        </div>
+      {% endif %}
     </div>
   </div>
   {% endfor %}
+
+  {% if total_pages > 1 %}
+    <nav class="mt-3">
+      <ul class="pagination justify-content-center">
+        {% if page > 1 %}
+          <li class="page-item">
+            <a class="page-link" href="?page={{ page - 1 }}">Anterior</a>
+          </li>
+        {% else %}
+          <li class="page-item disabled"><span class="page-link">Anterior</span></li>
+        {% endif %}
+        {% for p in range(1, total_pages + 1) %}
+          <li class="page-item {% if p == page %}active{% endif %}">
+            <a class="page-link" href="?page={{ p }}">{{ p }}</a>
+          </li>
+        {% endfor %}
+        {% if page < total_pages %}
+          <li class="page-item">
+            <a class="page-link" href="?page={{ page + 1 }}">Proxima</a>
+          </li>
+        {% else %}
+          <li class="page-item disabled"><span class="page-link">Proxima</span></li>
+        {% endif %}
+      </ul>
+    </nav>
+  {% endif %}
+
 {% else %}
   <div class="card mt-2">
     <div class="card-body text-center text-muted py-4">
@@ -47,4 +131,154 @@
     </div>
   </div>
 {% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script>
+(function() {
+  var rawData = {{ chart_data_json|safe }};
+  var extNames = {{ ext_names_json|safe }};
+  var chartArea = document.getElementById('chartArea');
+  var btnToggle = document.getElementById('btnToggleChart');
+  var canvas = document.getElementById('chartTempo');
+  var container = document.getElementById('chartContainer');
+  var emptyMsg = document.getElementById('chartEmpty');
+  if (!btnToggle || !rawData) return;
+
+  var chart = null;
+  var isOpen = false;
+
+  function formatDuration(secs) {
+    secs = Math.round(secs);
+    if (secs >= 3600) {
+      var h = Math.floor(secs / 3600);
+      var m = Math.floor((secs % 3600) / 60);
+      return h + 'h ' + m + 'min';
+    }
+    if (secs >= 60) {
+      var m = Math.floor(secs / 60);
+      var s = secs % 60;
+      return m + 'min ' + s + 's';
+    }
+    return secs + 's';
+  }
+
+  function getName(ext) {
+    return extNames[ext] || ext;
+  }
+
+  function getCutoffDate(period) {
+    if (period === 'all') return null;
+    var d = new Date();
+    if (period === 'week') d.setDate(d.getDate() - 7);
+    else if (period === 'month') d.setMonth(d.getMonth() - 1);
+    return d.toISOString().slice(0, 10);
+  }
+
+  function aggregate(period) {
+    var cutoff = getCutoffDate(period);
+    var totals = {};
+    rawData.forEach(function(r) {
+      if (cutoff && r.date < cutoff) return;
+      totals[r.contact_ext] = (totals[r.contact_ext] || 0) + r.seconds;
+    });
+    var sorted = Object.entries(totals).sort(function(a, b) { return b[1] - a[1]; });
+    return {
+      labels: sorted.map(function(e) { return getName(e[0]); }),
+      data: sorted.map(function(e) { return e[1]; })
+    };
+  }
+
+  function updateChart(period) {
+    var agg = aggregate(period);
+    if (agg.labels.length === 0) {
+      container.style.display = 'none';
+      emptyMsg.classList.remove('d-none');
+      if (chart) { chart.destroy(); chart = null; }
+      return;
+    }
+    container.style.display = 'block';
+    emptyMsg.classList.add('d-none');
+
+    // Altura: 50px por barra, minimo 120
+    var h = Math.max(120, agg.labels.length * 50 + 30);
+    container.style.height = h + 'px';
+
+    if (chart) { chart.destroy(); chart = null; }
+    chart = new Chart(canvas, {
+      type: 'bar',
+      data: {
+        labels: agg.labels,
+        datasets: [{
+          data: agg.data,
+          backgroundColor: '#6c757d',
+          borderRadius: 4,
+          barThickness: 28
+        }]
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: { duration: 400 },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: function(ctx) { return ' ' + formatDuration(ctx.raw); }
+            }
+          }
+        },
+        scales: {
+          x: {
+            beginAtZero: true,
+            ticks: {
+              callback: function(v) { return formatDuration(v); }
+            },
+            grid: { color: 'rgba(0,0,0,0.05)' }
+          },
+          y: {
+            grid: { display: false }
+          }
+        }
+      }
+    });
+  }
+
+  // Toggle com slideDown/slideUp simples
+  btnToggle.addEventListener('click', function() {
+    isOpen = !isOpen;
+    if (isOpen) {
+      chartArea.style.display = 'block';
+      chartArea.style.opacity = '0';
+      updateChart('week');
+      // Fade in
+      requestAnimationFrame(function() {
+        chartArea.style.transition = 'opacity 0.3s ease';
+        chartArea.style.opacity = '1';
+      });
+      btnToggle.innerHTML = '<i class="bi bi-x-circle me-1"></i> Fechar grafico';
+      // Scroll para mostrar o grafico
+      setTimeout(function() {
+        chartArea.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }, 100);
+    } else {
+      chartArea.style.transition = 'opacity 0.2s ease';
+      chartArea.style.opacity = '0';
+      setTimeout(function() { chartArea.style.display = 'none'; }, 200);
+      btnToggle.innerHTML = '<i class="bi bi-bar-chart-horizontal me-1"></i> Ver grafico';
+    }
+  });
+
+  // Filtros de periodo
+  document.querySelectorAll('[data-period]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      document.querySelectorAll('[data-period]').forEach(function(b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      updateChart(btn.dataset.period);
+    });
+  });
+})();
+</script>
 {% endblock %}

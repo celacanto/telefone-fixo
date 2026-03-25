@@ -457,26 +457,51 @@ def schedule(device_id):
 
     if request.method == 'POST':
         try:
+            # Limpar todos os horarios existentes
             for day in range(7):
-                enabled = request.form.get(f'enabled_{day}')
-                start_h = request.form.get(f'start_h_{day}', '00')
-                start_m = request.form.get(f'start_m_{day}', '00')
-                end_h = request.form.get(f'end_h_{day}', '00')
-                end_m = request.form.get(f'end_m_{day}', '00')
-                if enabled:
-                    start = f'{start_h}:{start_m}'
-                    end = f'{end_h}:{end_m}'
-                    models.set_schedule(db, device_id, day, start, end)
-                else:
-                    models.delete_schedule(db, device_id, day)
-            flash('Horarios salvos!', 'success')
+                models.delete_schedule(db, device_id, day)
+
+            # Processar padroes do novo formato
+            pattern_count = int(request.form.get('pattern_count', '0'))
+            for i in range(pattern_count):
+                start_h = request.form.get(f'start_h_{i}', '00')
+                start_m = request.form.get(f'start_m_{i}', '00')
+                end_h = request.form.get(f'end_h_{i}', '00')
+                end_m = request.form.get(f'end_m_{i}', '00')
+                days = request.form.getlist(f'days_{i}')
+                if not days:
+                    continue
+                start = f'{start_h}:{start_m}'
+                end = f'{end_h}:{end_m}'
+                for day_str in days:
+                    models.set_schedule(db, device_id, int(day_str), start, end)
+            flash('Horários salvos!', 'success')
         except ValueError as e:
             flash(f'Erro: {e}', 'danger')
         return redirect(url_for('schedule', device_id=device_id))
 
+    # Agrupar horarios existentes em padroes (por start_time + end_time)
     schedules_list = models.get_schedules(db, device_id)
-    schedules_by_day = {s['day_of_week']: s for s in schedules_list}
-    return render_template('schedule.html', device=device, schedules=schedules_by_day, active_tab='schedule')
+    patterns = {}
+    for s in schedules_list:
+        key = (s['start_time'], s['end_time'])
+        if key not in patterns:
+            patterns[key] = []
+        patterns[key].append(s['day_of_week'])
+
+    import json
+    patterns_json = json.dumps([
+        {
+            'sh': int(start.split(':')[0]),
+            'sm': int(start.split(':')[1]),
+            'eh': int(end.split(':')[0]),
+            'em': int(end.split(':')[1]),
+            'days': sorted(days)
+        }
+        for (start, end), days in patterns.items()
+    ])
+
+    return render_template('schedule.html', device=device, patterns_json=patterns_json, active_tab='schedule')
 
 
 # --- Contacts ---
@@ -568,6 +593,44 @@ def contacts(device_id):
     return render_template('contacts.html', device=device, contacts=contact_list, active_tab='contacts')
 
 
+@app.route('/devices/<int:device_id>/contacts/print')
+@login_required
+def contacts_print(device_id):
+    device = get_user_device(device_id)
+    db = get_db()
+
+    # Contatos que podem ligar (status can_call)
+    my_permissions = models.get_permissions(db, device_id)
+    my_allowed = {p['allowed_extension'] for p in my_permissions}
+    all_devices = models.get_all_devices(db)
+
+    contacts = []
+    for d in all_devices:
+        if d['extension'] == device['extension'] or d['user_id'] is None:
+            continue
+        if d['extension'] not in my_allowed:
+            continue
+        other_allows = db.execute(
+            """SELECT COUNT(*) as cnt FROM permissions p
+               JOIN devices od ON p.device_id = od.id
+               WHERE od.extension = ? AND p.allowed_extension = ?""",
+            (d['extension'], device['extension'])
+        ).fetchone()['cnt'] > 0
+        if other_allows:
+            contacts.append({'name': d['child_name'], 'extension': d['extension']})
+
+    # Adicionar celulares da familia se ativados
+    if device['parent_sip_extension']:
+        contacts.append({'name': 'Celular 1', 'extension': device['parent_sip_extension']})
+    if device['parent2_sip_extension']:
+        contacts.append({'name': 'Celular 2', 'extension': device['parent2_sip_extension']})
+
+    # Hora certa
+    contacts.append({'name': 'Hora certa', 'extension': '100'})
+
+    return render_template('contacts_print.html', device=device, contacts=contacts)
+
+
 # --- Call logs ---
 
 @app.route('/devices/<int:device_id>/logs')
@@ -575,8 +638,38 @@ def contacts(device_id):
 def call_logs(device_id):
     device = get_user_device(device_id)
     db = get_db()
-    logs = models.get_call_logs(db, device['extension'])
-    return render_template('call_logs.html', device=device, logs=logs, active_tab='logs')
+    page = request.args.get('page', 1, type=int)
+    if page < 1:
+        page = 1
+    per_page = 200
+    logs, total = models.get_call_logs(db, device['extension'], page=page, per_page=per_page)
+    total_pages = (total + per_page - 1) // per_page
+    # Mapa extensao -> nome para exibir nomes no historico
+    all_devices = models.get_all_devices(db)
+    ext_names = {d['extension']: d['child_name'] for d in all_devices if d['child_name']}
+    # Adicionar ramais de familia (celulares dos pais)
+    for d in all_devices:
+        is_own = d['extension'] == device['extension']
+        prefix = d['child_name'] or d['extension']
+        if d['parent_sip_extension']:
+            ext_names[d['parent_sip_extension']] = "Celular 1" if is_own else f"Celular 1 ({prefix})"
+        if d['parent2_sip_extension']:
+            ext_names[d['parent2_sip_extension']] = "Celular 2" if is_own else f"Celular 2 ({prefix})"
+    # Tempo total em chamadas
+    total_duration = db.execute(
+        """SELECT COALESCE(SUM(duration_seconds), 0) FROM call_logs
+           WHERE (caller_ext = ? OR callee_ext = ?) AND status = 'ALLOWED' AND duration_seconds > 0""",
+        (device['extension'], device['extension'])
+    ).fetchone()[0]
+    # Dados para grafico de tempo por contato
+    import json
+    chart_data = models.get_call_time_by_contact(db, device['extension'])
+    chart_data_json = json.dumps(chart_data)
+    ext_names_json = json.dumps(ext_names)
+    return render_template('call_logs.html', device=device, logs=logs, ext_names=ext_names,
+                           active_tab='logs', page=page, total_pages=total_pages, total=total,
+                           total_duration=total_duration,
+                           chart_data_json=chart_data_json, ext_names_json=ext_names_json)
 
 
 # --- Admin ---
@@ -819,7 +912,10 @@ def provision(token):
 @app.route('/sobre')
 @login_required
 def about():
-    return render_template('about.html', active_tab='about')
+    db = get_db()
+    devices = models.get_devices_for_user(db, session['user_id'])
+    device = devices[0] if devices else None
+    return render_template('about.html', device=device, active_tab='about')
 
 
 # --- Init ---

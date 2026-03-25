@@ -15,6 +15,7 @@
 #   2. Configurar o HT802 automaticamente via HTTP API
 #   3. Adicionar o ramal no servidor Asterisk
 #   4. Reiniciar o HT802
+#   5. Aguardar e confirmar registro SIP no servidor
 # =============================================================================
 
 set -euo pipefail
@@ -59,7 +60,7 @@ echo -e "${GREEN}Senha SIP gerada: ${SIP_PASS}${NC}"
 
 # --- Verifica conexão com o HT802 ---
 echo ""
-echo "[1/5] Conectando ao HT802 em ${HT_IP}..."
+echo "[1/6] Conectando ao HT802 em ${HT_IP}..."
 COOKIE_JAR="/tmp/gs_cookies_$$.txt"
 
 # HT802V2 usa base64 na senha e campo P2 (não "password")
@@ -99,7 +100,7 @@ echo -e "${GREEN}✓ Login OK (session: ${SID:0:8}...)${NC}"
 
 # --- Configura o HT802 ---
 echo ""
-echo "[2/5] Configurando HT802 (FXS PORT 1 = ramal ${RAMAL})..."
+echo "[2/6] Configurando HT802 (FXS PORT 1 = ramal ${RAMAL})..."
 
 # P-values para FXS PORT 1:
 # P271=1   Account Active = Yes
@@ -113,10 +114,20 @@ echo "[2/5] Configurando HT802 (FXS PORT 1 = ramal ${RAMAL})..."
 # P31=1    SIP Registration = Yes
 # P32=2    Register Expiration = 2 min (120 seg)
 # P81=1    Unregister on Reboot = Yes
+# --- Audio quality ---
+# P57=9    Preferred Vocoder 1 = G.722 (wideband HD)
+# P58=0    Preferred Vocoder 2 = PCMU (fallback)
+# P59=8    Preferred Vocoder 3 = PCMA (fallback)
+# P133=1   Jitter Buffer Type = Adaptive
+# P132=1   Jitter Buffer Length = Medium
+# P50=0    VAD/Silence Suppression = Disabled (evita corte de fala)
+# P824=0   Line Echo Canceller = Enabled (0 = enabled, campo "Disable")
+# P4441=0  Network Echo Suppressor = Enabled
+# P291=1   Symmetric RTP = Yes
 
 CONFIG_RESP=$(curl -s -b "${COOKIE_JAR}" \
   -H "X-Requested-With: XMLHttpRequest" \
-  -d "P271=1&P47=${VPS_IP}&P35=${RAMAL}&P36=${RAMAL}&P34=${SIP_PASS}&P3=${NOME}&P52=2&P130=1&P31=1&P32=2&P81=1&apply=1&session_token=${SID}" \
+  -d "P271=1&P47=${VPS_IP}&P35=${RAMAL}&P36=${RAMAL}&P34=${SIP_PASS}&P3=${NOME}&P52=2&P130=1&P31=1&P32=2&P81=1&P57=9&P58=0&P59=8&P133=1&P132=1&P50=0&P824=0&P4441=0&P291=1&apply=1&session_token=${SID}" \
   "http://${HT_IP}/cgi-bin/api.values.post" \
   --referer "http://${HT_IP}" 2>/dev/null || echo "FALHOU")
 
@@ -129,7 +140,7 @@ fi
 
 # --- Verifica se ramal já existe no servidor ---
 echo ""
-echo "[3/5] Adicionando ramal ${RAMAL} no servidor Asterisk..."
+echo "[3/6] Adicionando ramal ${RAMAL} no servidor Asterisk..."
 
 if [[ ! -f "$SSH_KEY" ]]; then
   echo -e "${RED}ERRO: Chave SSH não encontrada em ${SSH_KEY}${NC}"
@@ -165,7 +176,7 @@ inbound_auth/auth_type = userpass
 inbound_auth/username = ${RAMAL}
 inbound_auth/password = ${SIP_PASS}
 endpoint/context = telefones-criancas
-endpoint/allow = !all,ulaw,alaw
+endpoint/allow = !all,g722,ulaw,alaw
 endpoint/direct_media = no
 endpoint/rtp_symmetric = yes
 endpoint/force_rport = yes
@@ -204,7 +215,7 @@ fi
 
 # --- Cria device no portal web ---
 echo ""
-echo "[4/5] Criando device no portal web..."
+echo "[4/6] Criando device no portal web..."
 
 # Verifica se device já existe no portal
 DEVICE_INFO=$(ssh -i "${SSH_KEY}" -o StrictHostKeyChecking=no ubuntu@${VPS_IP} "
@@ -296,7 +307,7 @@ fi
 
 # --- Reinicia o HT802 ---
 echo ""
-echo "[5/5] Reiniciando HT802..."
+echo "[5/6] Reiniciando HT802..."
 
 REBOOT_RESP=$(curl -s -b "${COOKIE_JAR}" \
   -H "X-Requested-With: XMLHttpRequest" \
@@ -305,6 +316,34 @@ REBOOT_RESP=$(curl -s -b "${COOKIE_JAR}" \
   --referer "http://${HT_IP}" 2>/dev/null || echo "")
 
 echo -e "${GREEN}✓ HT802 reiniciando${NC}"
+
+# --- Aguarda registro SIP ---
+echo ""
+echo "[6/6] Aguardando ramal ${RAMAL} registrar no servidor..."
+echo "      (timeout: 120 segundos)"
+
+REGISTERED=0
+for i in $(seq 1 24); do
+  sleep 5
+  CONTACT=$(ssh -i "${SSH_KEY}" -o StrictHostKeyChecking=no ubuntu@${VPS_IP} \
+    "sudo asterisk -rx 'pjsip show contacts' 2>/dev/null" | grep "^  Contact:  ${RAMAL}/" | grep -v "sip:dynamic" || true)
+  if [[ -n "$CONTACT" ]]; then
+    REGISTERED=1
+    break
+  fi
+  printf "  %3ds...\r" $((i * 5))
+done
+echo ""
+
+if [[ "$REGISTERED" -eq 1 ]]; then
+  echo -e "${GREEN}✓ Ramal ${RAMAL} registrado no servidor com sucesso!${NC}"
+else
+  echo -e "${RED}AVISO: Ramal ${RAMAL} NÃO registrou após 120 segundos.${NC}"
+  echo "  Verifique:"
+  echo "    - O telefone está na porta PHONE 1 (porta de cima)?"
+  echo "    - O HT802 tem acesso à internet?"
+  echo "    - Tente reiniciar o HT802 (tirar da tomada e religar)"
+fi
 
 # --- Salva credenciais ---
 echo "" >> "${SCRIPT_DIR}/credenciais.md"
@@ -323,10 +362,7 @@ echo "  Nome:   ${NOME}"
 echo "  Senha SIP:  ${SIP_PASS}"
 echo "  Codigo de registro: ${REG_CODE}"
 echo ""
-echo "  O HT802 vai reiniciar e se registrar automaticamente."
-echo "  Aguarde ~1 minuto, depois teste:"
-echo "    - Tire o telefone do gancho"
-echo "    - Disque 100# para ouvir a hora"
+echo "  Teste: tire o telefone do gancho e disque 100# para ouvir a hora."
 echo ""
 echo "  Para ativar no portal, acesse /ativar e use o codigo: ${REG_CODE}"
 echo ""

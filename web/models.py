@@ -281,13 +281,61 @@ def log_call(conn, caller_ext, callee_ext, status, block_reason=None):
     conn.commit()
 
 
-def get_call_logs(conn, extension, limit=50):
-    return conn.execute(
+def get_call_logs(conn, extension, page=1, per_page=200):
+    offset = (page - 1) * per_page
+    total = conn.execute(
+        "SELECT COUNT(*) FROM call_logs WHERE caller_ext = ? OR callee_ext = ?",
+        (extension, extension)
+    ).fetchone()[0]
+    rows = conn.execute(
         """SELECT * FROM call_logs
            WHERE caller_ext = ? OR callee_ext = ?
-           ORDER BY timestamp DESC LIMIT ?""",
-        (extension, extension, limit)
+           ORDER BY timestamp DESC LIMIT ? OFFSET ?""",
+        (extension, extension, per_page, offset)
     ).fetchall()
+    return rows, total
+
+
+def get_call_time_by_contact(conn, extension):
+    """Retorna lista de {contact_ext, date, seconds} para montar grafico."""
+    results = []
+
+    # Chamadas diretas (nao grupo)
+    rows = conn.execute(
+        """SELECT
+             CASE WHEN caller_ext = ? THEN callee_ext ELSE caller_ext END AS contact_ext,
+             date(timestamp) AS dt,
+             SUM(duration_seconds) AS total_secs
+           FROM call_logs
+           WHERE (caller_ext = ? OR callee_ext = ?)
+             AND callee_ext != 'GRUPO'
+             AND status = 'ALLOWED'
+             AND duration_seconds > 0
+           GROUP BY contact_ext, dt""",
+        (extension, extension, extension)
+    ).fetchall()
+    for r in rows:
+        results.append({'contact_ext': r['contact_ext'], 'date': r['dt'], 'seconds': r['total_secs']})
+
+    # Chamadas em grupo (parse block_reason)
+    grupo_rows = conn.execute(
+        """SELECT timestamp, block_reason
+           FROM call_logs
+           WHERE caller_ext = ? AND callee_ext = 'GRUPO'
+             AND block_reason IS NOT NULL AND block_reason != ''
+             AND status = 'ALLOWED'""",
+        (extension,)
+    ).fetchall()
+    for r in grupo_rows:
+        dt = r['timestamp'][:10]  # YYYY-MM-DD
+        try:
+            for part in r['block_reason'].split(','):
+                ext, secs = part.split(':')
+                results.append({'contact_ext': ext.strip(), 'date': dt, 'seconds': int(secs)})
+        except (ValueError, IndexError):
+            pass
+
+    return results
 
 
 # --- Queries de todos os devices (para contacts) ---
