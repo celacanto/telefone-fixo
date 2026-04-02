@@ -21,9 +21,19 @@
 set -euo pipefail
 
 # --- Configurações fixas ---
-VPS_IP="${TELEFONE_VPS_IP:?Defina TELEFONE_VPS_IP com o IP do seu VPS}"
-SSH_KEY="${TELEFONE_SSH_KEY:-$(dirname "$0")/ssh-key.key}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Carrega .env do mesmo diretório do script
+if [[ -f "$SCRIPT_DIR/.env" ]]; then
+  source "$SCRIPT_DIR/.env"
+else
+  echo "Erro: arquivo .env não encontrado em $SCRIPT_DIR"
+  echo "Crie um .env com: TELEFONE_VPS_IP e TELEFONE_SSH_KEY"
+  exit 1
+fi
+
+VPS_IP="${TELEFONE_VPS_IP:?Defina TELEFONE_VPS_IP no .env}"
+SSH_KEY="$SCRIPT_DIR/${TELEFONE_SSH_KEY:?Defina TELEFONE_SSH_KEY no .env}"
 
 # --- Cores ---
 GREEN='\033[0;32m'
@@ -58,45 +68,269 @@ SIP_PASS=$(python3 -c "import secrets; print(secrets.token_urlsafe(16))")
 echo ""
 echo -e "${GREEN}Senha SIP gerada: ${SIP_PASS}${NC}"
 
-# --- Verifica conexão com o HT802 ---
+# --- Helper Python para HTTP do HT802 (firmware antigo tem headers malformados) ---
+GS_HELPER="/tmp/gs_helper_$$.py"
+cat > "${GS_HELPER}" << 'PYHELPER'
+#!/usr/bin/env python3
+"""Helper para comunicação HTTP com Grandstream HT802/HT801 (firmware antigo e V2).
+
+O firmware antigo retorna headers HTTP duplicados/malformados que curl e urllib rejeitam.
+Este helper usa socket raw para parsear a resposta manualmente.
+"""
+import socket, sys, re, json, urllib.parse
+
+def http_post(ip, path, body, cookie=None, timeout=10):
+    """Faz POST via socket raw. Retorna (headers_dict, body_text, raw_headers)."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(timeout)
+    try:
+        s.connect((ip, 80))
+    except (socket.timeout, ConnectionRefusedError, OSError):
+        return None, None, None
+
+    headers = f"POST {path} HTTP/1.1\r\nHost: {ip}\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: {len(body)}\r\nConnection: close\r\n"
+    if cookie:
+        headers += f"Cookie: session_id={cookie}\r\n"
+    headers += "\r\n"
+    s.sendall((headers + body).encode())
+
+    resp = b''
+    while True:
+        try:
+            chunk = s.recv(8192)
+            if not chunk:
+                break
+            resp += chunk
+        except:
+            break
+    s.close()
+
+    text = resp.decode('utf-8', errors='replace')
+    # Separar headers do body (procura <html ou duplo newline)
+    html_idx = text.lower().find('<html')
+    if html_idx > 0:
+        raw_h = text[:html_idx]
+        body_text = text[html_idx:]
+    else:
+        parts = re.split(r'\r?\n\r?\n', text, maxsplit=1)
+        raw_h = parts[0] if len(parts) > 1 else ''
+        body_text = parts[1] if len(parts) > 1 else text
+
+    # Parse headers
+    hdict = {}
+    for line in raw_h.split('\n'):
+        if ':' in line and not line.startswith('HTTP'):
+            k, v = line.split(':', 1)
+            hdict[k.strip().lower()] = v.strip()
+    return hdict, body_text, raw_h
+
+def http_get(ip, path, cookie=None, timeout=10):
+    """Faz GET via socket raw."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(timeout)
+    try:
+        s.connect((ip, 80))
+    except:
+        return None, None
+    headers = f"GET {path} HTTP/1.1\r\nHost: {ip}\r\nConnection: close\r\n"
+    if cookie:
+        headers += f"Cookie: session_id={cookie}\r\n"
+    headers += "\r\n"
+    s.sendall(headers.encode())
+    resp = b''
+    while True:
+        try:
+            chunk = s.recv(8192)
+            if not chunk:
+                break
+            resp += chunk
+        except:
+            break
+    s.close()
+    text = resp.decode('utf-8', errors='replace')
+    html_idx = text.lower().find('<html')
+    return text[html_idx:] if html_idx >= 0 else text, text[:html_idx] if html_idx >= 0 else ''
+
+cmd = sys.argv[1]
+ip = sys.argv[2]
+
+if cmd == "detect":
+    # Testa se é HT802V2 (Vue.js) ou legacy pela página de login (sem gastar tentativa)
+    body, _ = http_get(ip, "/cgi-bin/login", timeout=5)
+    if body is None:
+        print("UNREACHABLE")
+    elif "vue" in body.lower() or "api.values" in body or "XMLHttpRequest" in body:
+        print("v2")
+    elif "gnkey" in body or "Grandstream" in body:
+        print("legacy")
+    else:
+        # Fallback: tenta pelo content-type da resposta de login
+        print("legacy")
+
+elif cmd == "login":
+    password = sys.argv[3]
+    firmware = sys.argv[4]  # "v2" ou "legacy"
+
+    if firmware == "v2":
+        import base64
+        pwd_b64 = base64.b64encode(password.encode()).decode()
+        _, body, _ = http_post(ip, "/cgi-bin/dologin",
+            f"username=admin&P2={pwd_b64}",
+            timeout=10)
+        if body is None:
+            print("ERROR:connection")
+            sys.exit(1)
+        try:
+            data = json.loads(body.strip())
+            b = data.get('body', {})
+            sid = b.get('session_token', b.get('sid', '')) if isinstance(b, dict) else ''
+            if sid:
+                print(f"OK:{sid}")
+            else:
+                print("ERROR:auth")
+        except:
+            print("ERROR:parse")
+    else:
+        # Legacy: precisa do session_token da página admin para obter sessão privilegiada
+        # 1. GET /cgi-bin/update retorna página de admin login com session_token
+        admin_page, _ = http_get(ip, "/cgi-bin/update", timeout=5)
+        session_token = ""
+        if admin_page:
+            m = re.search(r'name="session_token"[^>]*value="([^"]+)"', admin_page)
+            if m:
+                session_token = m.group(1)
+
+        # 2. POST /cgi-bin/dologin com session_token para obter sessão admin
+        params = {"username": "admin", "P2": password, "Login": "Login"}
+        if session_token:
+            params["session_token"] = session_token
+
+        body = urllib.parse.urlencode(params)
+        hdrs, resp_body, _ = http_post(ip, "/cgi-bin/dologin", body, timeout=10)
+        if hdrs is None:
+            print("ERROR:connection")
+            sys.exit(1)
+
+        if resp_body and "locked" in resp_body.lower():
+            print("ERROR:locked")
+            sys.exit(1)
+
+        # Extrair session_id do Set-Cookie header
+        cookie_h = hdrs.get('set-cookie', '')
+        m = re.search(r'session_id=([^;\s]+)', cookie_h)
+        if m:
+            sid = m.group(1)
+            # Verificar se realmente logou (resposta deve ter STATUS/config)
+            if "STATUS" in (resp_body or '') or "FXS" in (resp_body or '') or "BASIC" in (resp_body or ''):
+                print(f"OK:{sid}")
+            else:
+                print("ERROR:auth")
+        else:
+            print("ERROR:auth")
+
+elif cmd == "config":
+    sid = sys.argv[3]
+    firmware = sys.argv[4]
+    pvalues = sys.argv[5]  # URL-encoded P-values
+
+    if firmware == "v2":
+        _, body, _ = http_post(ip, "/cgi-bin/api.values.post",
+            f"{pvalues}&apply=1&session_token={sid}", timeout=10)
+        if body and "success" in body.lower():
+            print("OK")
+        else:
+            print(f"WARN:{(body or '')[:200]}")
+    else:
+        # Legacy: precisa do session_token e gnkey do form da página config_a1
+        config_page, _ = http_get(ip, "/cgi-bin/config_a1", cookie=sid, timeout=10)
+        form_token = ""
+        form_gnkey = "0b82"
+        if config_page:
+            m = re.search(r'name="session_token"[^>]*value="([^"]+)"', config_page)
+            if m:
+                form_token = m.group(1)
+            m = re.search(r'name="gnkey"[^>]*value=([^\s>]+)', config_page)
+            if m:
+                form_gnkey = m.group(1).strip('"')
+
+        update_body = f"{pvalues}&session_token={form_token}&gnkey={form_gnkey}&update=Update"
+        _, body, _ = http_post(ip, "/cgi-bin/update", update_body, cookie=sid, timeout=10)
+        if body is None:
+            print("ERROR:connection")
+        elif "doadminlogin" in (body or ''):
+            print("ERROR:session")
+        else:
+            print("OK")
+
+elif cmd == "reboot":
+    sid = sys.argv[3]
+    firmware = sys.argv[4]
+    if firmware == "v2":
+        http_post(ip, "/cgi-bin/rs", f"session_token={sid}", timeout=5)
+    else:
+        # Legacy: precisa de session_token do form para reboot
+        config_page, _ = http_get(ip, "/cgi-bin/config_a1", cookie=sid, timeout=5)
+        form_token = ""
+        if config_page:
+            m = re.search(r'name="session_token"[^>]*value="([^"]+)"', config_page)
+            if m:
+                form_token = m.group(1)
+        http_post(ip, "/cgi-bin/rs", f"session_token={form_token}", cookie=sid, timeout=5)
+    print("OK")
+PYHELPER
+
+# --- Verifica conexão e senha do HT802 ---
 echo ""
-echo "[1/6] Conectando ao HT802 em ${HT_IP}..."
 COOKIE_JAR="/tmp/gs_cookies_$$.txt"
+MAX_TENTATIVAS=3
+TENTATIVA=0
+SID=""
+HT_FIRMWARE=""
 
-# HT802V2 usa base64 na senha e campo P2 (não "password")
-HT_PASS_B64=$(echo -n "${HT_PASS}" | base64)
+echo "[1/6] Conectando ao HT802 em ${HT_IP}..."
 
-LOGIN_RESP=$(curl -s -c "${COOKIE_JAR}" \
-  -H "X-Requested-With: XMLHttpRequest" \
-  -d "username=admin&P2=${HT_PASS_B64}" \
-  "http://${HT_IP}/cgi-bin/dologin" \
-  --referer "http://${HT_IP}" \
-  --connect-timeout 5 2>/dev/null || echo "FALHOU")
-
-if echo "$LOGIN_RESP" | grep -q "FALHOU"; then
+# Detecta tipo de firmware
+HT_FIRMWARE=$(python3 "${GS_HELPER}" detect "${HT_IP}")
+if [[ "$HT_FIRMWARE" == "UNREACHABLE" ]]; then
   echo -e "${RED}ERRO: Não consegui conectar ao HT802 em ${HT_IP}${NC}"
-  rm -f "${COOKIE_JAR}"
+  echo "  Verifique se o IP está correto e o HT802 está ligado."
+  rm -f "${GS_HELPER}"
   exit 1
 fi
+echo "  Firmware detectado: ${HT_FIRMWARE}"
 
-SID=$(echo "$LOGIN_RESP" | python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-body = data.get('body', {})
-if isinstance(body, dict):
-    print(body.get('session_token', body.get('sid', '')))
-else:
-    print('')
-" 2>/dev/null || echo "")
+# Login
+while [[ -z "$SID" ]]; do
+  TENTATIVA=$((TENTATIVA + 1))
 
-if [[ -z "$SID" ]]; then
-  echo -e "${RED}ERRO: Login falhou. Verifique a senha admin do HT802.${NC}"
-  echo "Resposta: ${LOGIN_RESP}"
-  rm -f "${COOKIE_JAR}"
-  exit 1
-fi
+  LOGIN_RESULT=$(python3 "${GS_HELPER}" login "${HT_IP}" "${HT_PASS}" "${HT_FIRMWARE}")
 
-echo -e "${GREEN}✓ Login OK (session: ${SID:0:8}...)${NC}"
+  if [[ "$LOGIN_RESULT" == OK:* ]]; then
+    SID="${LOGIN_RESULT#OK:}"
+    break
+  elif [[ "$LOGIN_RESULT" == "ERROR:locked" ]]; then
+    echo -e "${RED}ERRO: HT802 bloqueado por excesso de tentativas de login.${NC}"
+    echo -e "${YELLOW}Desliga o HT802 da tomada, espera 10 segundos, liga de novo e tenta de novo.${NC}"
+    rm -f "${GS_HELPER}"
+    exit 1
+  elif [[ "$LOGIN_RESULT" == "ERROR:connection" ]]; then
+    echo -e "${RED}ERRO: Não consegui conectar ao HT802 em ${HT_IP}${NC}"
+    rm -f "${GS_HELPER}"
+    exit 1
+  else
+    # Senha incorreta
+    if [[ $TENTATIVA -ge $MAX_TENTATIVAS ]]; then
+      echo -e "${RED}ERRO: Senha incorreta apos ${MAX_TENTATIVAS} tentativas.${NC}"
+      echo -e "${YELLOW}Dica: Tente fazer factory reset (botao RESET por 7s) e use 'admin' ou o MAC em minusculas como senha.${NC}"
+      rm -f "${GS_HELPER}"
+      exit 1
+    fi
+    echo -e "${RED}Senha incorreta. Tentativa ${TENTATIVA}/${MAX_TENTATIVAS}.${NC}"
+    read -p "Digite a senha admin novamente: " HT_PASS
+  fi
+done
+
+echo -e "${GREEN}✓ Login OK — firmware ${HT_FIRMWARE} (session: ${SID:0:8}...)${NC}"
 
 # --- Configura o HT802 ---
 echo ""
@@ -125,16 +359,17 @@ echo "[2/6] Configurando HT802 (FXS PORT 1 = ramal ${RAMAL})..."
 # P4441=0  Network Echo Suppressor = Enabled
 # P291=1   Symmetric RTP = Yes
 
-CONFIG_RESP=$(curl -s -b "${COOKIE_JAR}" \
-  -H "X-Requested-With: XMLHttpRequest" \
-  -d "P271=1&P47=${VPS_IP}&P35=${RAMAL}&P36=${RAMAL}&P34=${SIP_PASS}&P3=${NOME}&P52=2&P130=1&P31=1&P32=2&P81=1&P57=9&P58=0&P59=8&P133=1&P132=1&P50=0&P824=0&P4441=0&P291=1&apply=1&session_token=${SID}" \
-  "http://${HT_IP}/cgi-bin/api.values.post" \
-  --referer "http://${HT_IP}" 2>/dev/null || echo "FALHOU")
+PVALUES="P271=1&P47=${VPS_IP}&P35=${RAMAL}&P36=${RAMAL}&P34=${SIP_PASS}&P3=${NOME}&P52=2&P130=1&P31=1&P32=2&P81=1&P57=9&P58=0&P59=8&P133=1&P132=1&P50=0&P824=0&P4441=0&P291=1"
 
-if echo "$CONFIG_RESP" | grep -qi "success"; then
+CONFIG_RESULT=$(python3 "${GS_HELPER}" config "${HT_IP}" "${SID}" "${HT_FIRMWARE}" "${PVALUES}")
+
+if [[ "$CONFIG_RESULT" == OK* ]]; then
   echo -e "${GREEN}✓ HT802 configurado${NC}"
+elif [[ "$CONFIG_RESULT" == ERROR:session ]]; then
+  echo -e "${RED}ERRO: Sessão expirou durante configuração${NC}"
+  echo "Continuando mesmo assim..."
 else
-  echo -e "${YELLOW}Resposta do HT802: ${CONFIG_RESP}${NC}"
+  echo -e "${YELLOW}Resposta: ${CONFIG_RESULT}${NC}"
   echo "Continuando mesmo assim..."
 fi
 
@@ -145,7 +380,7 @@ echo "[3/6] Adicionando ramal ${RAMAL} no servidor Asterisk..."
 if [[ ! -f "$SSH_KEY" ]]; then
   echo -e "${RED}ERRO: Chave SSH não encontrada em ${SSH_KEY}${NC}"
   echo "Coloque a chave SSH no mesmo diretório deste script."
-  rm -f "${COOKIE_JAR}"
+  rm -f "${COOKIE_JAR}" "${GS_HELPER}"
   exit 1
 fi
 
@@ -309,11 +544,7 @@ fi
 echo ""
 echo "[5/6] Reiniciando HT802..."
 
-REBOOT_RESP=$(curl -s -b "${COOKIE_JAR}" \
-  -H "X-Requested-With: XMLHttpRequest" \
-  -d "session_token=${SID}" \
-  "http://${HT_IP}/cgi-bin/rs" \
-  --referer "http://${HT_IP}" 2>/dev/null || echo "")
+python3 "${GS_HELPER}" reboot "${HT_IP}" "${SID}" "${HT_FIRMWARE}" 2>/dev/null || true
 
 echo -e "${GREEN}✓ HT802 reiniciando${NC}"
 
@@ -350,7 +581,7 @@ echo "" >> "${SCRIPT_DIR}/credenciais.md"
 echo "| ${RAMAL}   | ${RAMAL}     | ${SIP_PASS} | HT802 - ${NOME} |" >> "${SCRIPT_DIR}/credenciais.md"
 
 # --- Limpa ---
-rm -f "${COOKIE_JAR}"
+rm -f "${COOKIE_JAR}" "${GS_HELPER}"
 
 echo ""
 echo "========================================="
