@@ -149,10 +149,14 @@ def main():
         agi_database_deltree('confroom', conf_room)
         agi_verbose(f'conf_leave: conferencia {conf_room} encerrada (ultimo)')
     elif len(remaining) == 1:
-        # Penultimo a sair — manter dados para o ultimo calcular overlap
+        # Penultimo a sair — manter dados para o ultimo calcular overlap,
+        # mas fechar a sala e limpar ponteiro para evitar dados residuais
+        # caso o conf_leave do ultimo nao execute (crash, timeout, etc.)
         agi_database_put('confroom', f'{conf_room}/members', ','.join(remaining))
         agi_database_put('confroom', f'{conf_room}/count', '1')
-        agi_verbose(f'conf_leave: 1 restante em {conf_room}')
+        agi_database_put('confroom', f'{conf_room}/open', '0')
+        agi_database_del('confbridge', remaining[0])
+        agi_verbose(f'conf_leave: 1 restante em {conf_room} (sala fechada)')
     else:
         # Varios restantes
         agi_database_put('confroom', f'{conf_room}/members', ','.join(remaining))

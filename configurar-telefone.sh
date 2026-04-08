@@ -191,19 +191,23 @@ elif cmd == "login":
         except:
             print("ERROR:parse")
     else:
-        # Legacy: precisa do session_token da página admin para obter sessão privilegiada
-        # 1. GET /cgi-bin/update retorna página de admin login com session_token
-        admin_page, _ = http_get(ip, "/cgi-bin/update", timeout=5)
+        # Legacy: o JavaScript da página de login faz btoa(senha) antes de enviar
+        import base64
+        pwd_b64 = base64.b64encode(password.encode()).decode()
+
+        # GET /cgi-bin/login para extrair session_token e gnkey
+        login_page, _ = http_get(ip, "/cgi-bin/login", timeout=5)
         session_token = ""
-        if admin_page:
-            m = re.search(r'name="session_token"[^>]*value="([^"]+)"', admin_page)
+        gnkey = "0b82"
+        if login_page:
+            m = re.search(r'name="session_token"[^>]*value="([^"]*)"', login_page)
             if m:
                 session_token = m.group(1)
+            m = re.search(r'name="gnkey"[^>]*value=([^\s>]+)', login_page)
+            if m:
+                gnkey = m.group(1).strip('"')
 
-        # 2. POST /cgi-bin/dologin com session_token para obter sessão admin
-        params = {"username": "admin", "P2": password, "Login": "Login"}
-        if session_token:
-            params["session_token"] = session_token
+        params = {"session_token": session_token, "username": "admin", "P2": pwd_b64, "Login": "Login", "gnkey": gnkey}
 
         body = urllib.parse.urlencode(params)
         hdrs, resp_body, _ = http_post(ip, "/cgi-bin/dologin", body, timeout=10)
@@ -220,7 +224,6 @@ elif cmd == "login":
         m = re.search(r'session_id=([^;\s]+)', cookie_h)
         if m:
             sid = m.group(1)
-            # Verificar se realmente logou (resposta deve ter STATUS/config)
             if "STATUS" in (resp_body or '') or "FXS" in (resp_body or '') or "BASIC" in (resp_body or ''):
                 print(f"OK:{sid}")
             else:
@@ -546,15 +549,24 @@ echo "[5/6] Reiniciando HT802..."
 
 python3 "${GS_HELPER}" reboot "${HT_IP}" "${SID}" "${HT_FIRMWARE}" 2>/dev/null || true
 
-echo -e "${GREEN}✓ HT802 reiniciando${NC}"
+# Firmware legacy demora mais para reiniciar (~90s vs ~30s do V2)
+if [[ "$HT_FIRMWARE" == "legacy" ]]; then
+  WAIT_TIMEOUT=240
+  WAIT_STEPS=48
+  echo -e "${GREEN}✓ HT802 reiniciando (firmware antigo — boot leva ~90 segundos)${NC}"
+else
+  WAIT_TIMEOUT=120
+  WAIT_STEPS=24
+  echo -e "${GREEN}✓ HT802 reiniciando${NC}"
+fi
 
 # --- Aguarda registro SIP ---
 echo ""
 echo "[6/6] Aguardando ramal ${RAMAL} registrar no servidor..."
-echo "      (timeout: 120 segundos)"
+echo "      (timeout: ${WAIT_TIMEOUT} segundos)"
 
 REGISTERED=0
-for i in $(seq 1 24); do
+for i in $(seq 1 ${WAIT_STEPS}); do
   sleep 5
   CONTACT=$(ssh -i "${SSH_KEY}" -o StrictHostKeyChecking=no ubuntu@${VPS_IP} \
     "sudo asterisk -rx 'pjsip show contacts' 2>/dev/null" | grep "^  Contact:  ${RAMAL}/" | grep -v "sip:dynamic" || true)
@@ -569,7 +581,7 @@ echo ""
 if [[ "$REGISTERED" -eq 1 ]]; then
   echo -e "${GREEN}✓ Ramal ${RAMAL} registrado no servidor com sucesso!${NC}"
 else
-  echo -e "${RED}AVISO: Ramal ${RAMAL} NÃO registrou após 120 segundos.${NC}"
+  echo -e "${RED}AVISO: Ramal ${RAMAL} NÃO registrou após ${WAIT_TIMEOUT} segundos.${NC}"
   echo "  Verifique:"
   echo "    - O telefone está na porta PHONE 1 (porta de cima)?"
   echo "    - O HT802 tem acesso à internet?"

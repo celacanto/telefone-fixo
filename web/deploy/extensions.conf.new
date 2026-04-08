@@ -146,7 +146,10 @@ exten => _XXX,1,NoOp(Chamada de ${CALLERID(num)} para ${EXTEN})
  ; Verificar se destino esta em conferencia aberta
  same => n,Set(DEST_CONF=${DB(confbridge/${EXTEN})})
  same => n,GotoIf($["${DEST_CONF}" = ""]?chamada_normal)
- same => n,GotoIf($["${DB(confroom/${DEST_CONF}/open)}" != "1"]?dest_ocupado)
+ same => n,GotoIf($["${DB(confroom/${DEST_CONF}/open)}" != "1"]?limpar_conf)
+ ; Verificar se a conferencia realmente tem participantes (protege contra dados residuais)
+ same => n,Set(CONF_PARTIES=${CONFBRIDGE_INFO(parties,${DEST_CONF})})
+ same => n,GotoIf($[${CONF_PARTIES:=0} < 1]?limpar_conf)
  ; Destino em conferencia aberta — verificar permissoes com todos do grupo
  same => n,Set(CONF_MEMBERS=${DB(confroom/${DEST_CONF}/members)})
  same => n,Set(CONF_COUNT=${DB(confroom/${DEST_CONF}/count)})
@@ -190,6 +193,11 @@ exten => _XXX,1,NoOp(Chamada de ${CALLERID(num)} para ${EXTEN})
  same => n(dest_ocupado),Answer()
  same => n,Playback(telefone/ocupado)
  same => n,Hangup()
+ ; Limpar dados residuais de conferencia encerrada e fazer chamada normal
+ same => n(limpar_conf),NoOp(Limpando conferencia residual ${DEST_CONF})
+ same => n,DBdel(confbridge/${EXTEN})
+ same => n,DBdeltree(confroom/${DEST_CONF})
+ same => n,Goto(chamada_normal)
 
 ; Hangup handler — limpa conferencia (se aplicavel) e loga a chamada
 exten => h,1,AGI(conf_leave.py)
