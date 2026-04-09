@@ -8,7 +8,7 @@
 #   - IP do HT802 na rede local (ex: 192.168.1.85)
 #   - Senha admin do HT802 (ver etiqueta no aparelho)
 #   - Número do ramal (ex: 002)
-#   - Nome da criança (ex: Pedro)
+#   - Nome da criança (ex: Fulano)
 #
 # Ele vai:
 #   1. Gerar uma senha SIP forte
@@ -50,7 +50,7 @@ echo ""
 read -p "IP do HT802 na rede local (ex: 192.168.1.85): " HT_IP
 read -p "Senha admin do HT802 (ver etiqueta no aparelho): " HT_PASS
 read -p "Número do ramal (3 dígitos, ex: 002): " RAMAL
-read -p "Nome da criança (ex: Pedro): " NOME
+read -p "Nome da criança (ex: Fulano): " NOME
 
 # --- Validações ---
 if [[ ! "$RAMAL" =~ ^[0-9]{3}$ ]]; then
@@ -191,14 +191,13 @@ elif cmd == "login":
         except:
             print("ERROR:parse")
     else:
-        # Legacy: o JavaScript da página de login faz btoa(senha) antes de enviar
         import base64
-        pwd_b64 = base64.b64encode(password.encode()).decode()
 
-        # GET /cgi-bin/login para extrair session_token e gnkey
+        # GET /cgi-bin/login para extrair campos do form
         login_page, _ = http_get(ip, "/cgi-bin/login", timeout=5)
         session_token = ""
         gnkey = "0b82"
+        has_btoa = False
         if login_page:
             m = re.search(r'name="session_token"[^>]*value="([^"]*)"', login_page)
             if m:
@@ -206,8 +205,14 @@ elif cmd == "login":
             m = re.search(r'name="gnkey"[^>]*value=([^\s>]+)', login_page)
             if m:
                 gnkey = m.group(1).strip('"')
+            has_btoa = 'btoa(' in login_page
 
-        params = {"session_token": session_token, "username": "admin", "P2": pwd_b64, "Login": "Login", "gnkey": gnkey}
+        # Senha: base64 se o JS faz btoa(), senao texto plano
+        pwd_val = base64.b64encode(password.encode()).decode() if has_btoa else password
+
+        # Sempre enviar todos os campos que o form espera
+        params = {"session_token": session_token, "username": "admin",
+                  "P2": pwd_val, "Login": "Login", "gnkey": gnkey}
 
         body = urllib.parse.urlencode(params)
         hdrs, resp_body, _ = http_post(ip, "/cgi-bin/dologin", body, timeout=10)
@@ -226,8 +231,12 @@ elif cmd == "login":
             sid = m.group(1)
             if "STATUS" in (resp_body or '') or "FXS" in (resp_body or '') or "BASIC" in (resp_body or ''):
                 print(f"OK:{sid}")
+            elif "change_default_password" in (resp_body or '').lower() or "cur_pwd" in (resp_body or ''):
+                print(f"CHANGE_PASSWORD:{sid}")
             else:
                 print("ERROR:auth")
+        elif resp_body and ("change_default_password" in resp_body.lower() or "cur_pwd" in resp_body):
+            print("CHANGE_PASSWORD:")
         else:
             print("ERROR:auth")
 
@@ -265,6 +274,135 @@ elif cmd == "config":
         else:
             print("OK")
 
+elif cmd == "version":
+    # Detecta versao do firmware pelo SIP User-Agent na pagina de status
+    # ou pelo Last-Modified dos arquivos web
+    sid = sys.argv[3]
+    firmware = sys.argv[4]
+    if firmware == "v2":
+        _, body, _ = http_post(ip, "/cgi-bin/api.values.get",
+            f"request=P-values&session_token={sid}", timeout=10)
+        # Tentar extrair versao
+        if body:
+            m = re.search(r'"P(\d+)"\s*:\s*"(1\.0\.\d+\.\d+)"', body)
+            if m:
+                print(m.group(2))
+                sys.exit(0)
+        # Fallback: ler header Last-Modified da pagina raiz
+        page, hdrs = http_get(ip, "/", timeout=5)
+        if hdrs:
+            m = re.search(r'Last-Modified:\s*(.+)', hdrs)
+            if m and '2025' in m.group(1):
+                print("RECENT")
+                sys.exit(0)
+        print("UNKNOWN")
+    else:
+        # Legacy: verificar via SIP registration user-agent (nao acessivel aqui)
+        # Usar Last-Modified como proxy — firmware antigo tem datas de 2020
+        resp, hdrs = http_get(ip, "/", timeout=5)
+        if hdrs:
+            m = re.search(r'Last-Modified:\s*(.+)', hdrs)
+            if m:
+                date_str = m.group(1).strip()
+                # Firmware antigo: 2020, novo: 2025
+                if '2020' in date_str or '2019' in date_str or '2018' in date_str:
+                    print("OLD")
+                else:
+                    print("RECENT")
+                sys.exit(0)
+        print("UNKNOWN")
+
+elif cmd == "change_password":
+    # Troca senha admin apos upgrade de firmware (pagina de troca obrigatoria)
+    old_pass = sys.argv[3]
+    new_pass = sys.argv[4]
+    firmware = sys.argv[5]
+    import base64
+    old_b64 = base64.b64encode(old_pass.encode()).decode()
+    new_b64 = base64.b64encode(new_pass.encode()).decode()
+
+    if firmware == "v2":
+        _, body, _ = http_post(ip, "/cgi-bin/dologin",
+            f"username=admin&P2={urllib.parse.quote(old_b64)}",
+            timeout=10)
+        # Extrair session token se disponivel
+        if body:
+            try:
+                data = json.loads(body.strip())
+                sid = data.get('body', {}).get('session_token', '')
+                if sid:
+                    # Trocar senha
+                    _, resp, _ = http_post(ip, "/cgi-bin/api.values.post",
+                        f"P2={urllib.parse.quote(new_b64)}&session_token={sid}", timeout=10)
+                    print("OK")
+                    sys.exit(0)
+            except:
+                pass
+        print("ERROR")
+    else:
+        # Legacy: pagina de troca de senha usa form com cur_pwd e new_pwd
+        import base64 as b64mod
+        # Primeiro, fazer login normal (senha em base64 como o login exige)
+        login_page, _ = http_get(ip, "/cgi-bin/login", timeout=5)
+        session_token = ""
+        gnkey = "0b82"
+        if login_page:
+            m = re.search(r'name="session_token"[^>]*value="([^"]*)"', login_page)
+            if m:
+                session_token = m.group(1)
+            m = re.search(r'name="gnkey"[^>]*value=([^\s>]+)', login_page)
+            if m:
+                gnkey = m.group(1).strip('"')
+
+        params = {"session_token": session_token, "username": "admin",
+                  "P2": old_b64, "Login": "Login", "gnkey": gnkey}
+        body = urllib.parse.urlencode(params)
+        hdrs, resp_body, _ = http_post(ip, "/cgi-bin/dologin", body, timeout=10)
+
+        # Checar se pede troca de senha
+        if resp_body and ('change_default_password' in resp_body.lower() or 'cur_pwd' in resp_body):
+            # Extrair session_token e gnkey do form de troca
+            st = ""
+            gk = "0b82"
+            m = re.search(r'name="session_token"[^>]*value="([^"]*)"', resp_body)
+            if m:
+                st = m.group(1)
+            m = re.search(r'name="gnkey"[^>]*value=([^\s>]+)', resp_body)
+            if m:
+                gk = m.group(1).strip('"')
+
+            # Extrair cookie session_id
+            cookie_h = hdrs.get('set-cookie', '') if hdrs else ''
+            m = re.search(r'session_id=([^;\s]+)', cookie_h)
+            sid = m.group(1) if m else ''
+
+            # Clear session primeiro (obrigatorio antes de trocar senha)
+            http_get(ip, f"/cgi-bin/api-clear_session?session_script=http://{ip}/cgi-bin/dologin", cookie=sid, timeout=5)
+
+            # POST para api-change_default_password (senhas em texto plano)
+            chg_params = urllib.parse.urlencode({
+                "session_token": st,
+                "user_name": "admin",
+                "cur_pwd": old_pass,
+                "new_pwd": new_pass,
+                "confirm_pwd": new_pass,
+                "Modify": "Modify",
+                "gnkey": gk
+            })
+            _, chg_resp, _ = http_post(ip, "/cgi-bin/api-change_default_password", chg_params, cookie=sid, timeout=10)
+            # Resposta vazia ou redirect = sucesso
+            if chg_resp is None or len(chg_resp.strip()) == 0 or 'STATUS' in (chg_resp or ''):
+                print("OK")
+            elif 'invalid' in (chg_resp or '').lower():
+                print("ERROR")
+            else:
+                print("OK")
+        elif resp_body and ('STATUS' in resp_body or 'FXS' in resp_body):
+            # Nao pede troca — ja logou normal
+            print("NOT_NEEDED")
+        else:
+            print("ERROR")
+
 elif cmd == "reboot":
     sid = sys.argv[3]
     firmware = sys.argv[4]
@@ -290,7 +428,7 @@ TENTATIVA=0
 SID=""
 HT_FIRMWARE=""
 
-echo "[1/6] Conectando ao HT802 em ${HT_IP}..."
+echo "[1/7] Conectando ao HT802 em ${HT_IP}..."
 
 # Detecta tipo de firmware
 HT_FIRMWARE=$(python3 "${GS_HELPER}" detect "${HT_IP}")
@@ -311,6 +449,31 @@ while [[ -z "$SID" ]]; do
   if [[ "$LOGIN_RESULT" == OK:* ]]; then
     SID="${LOGIN_RESULT#OK:}"
     break
+  elif [[ "$LOGIN_RESULT" == CHANGE_PASSWORD:* ]]; then
+    # Firmware novo exige troca de senha admin apos factory reset
+    # Gerar senha nova (firmware nao aceita manter "admin")
+    NEW_ADMIN_PASS="Telefone1"
+    echo -e "${YELLOW}  Firmware exige troca de senha admin...${NC}"
+    echo -e "${YELLOW}  Nova senha admin: ${NEW_ADMIN_PASS}${NC}"
+    CHG_RESULT=$(python3 "${GS_HELPER}" change_password "${HT_IP}" "${HT_PASS}" "${NEW_ADMIN_PASS}" "${HT_FIRMWARE}")
+    if [[ "$CHG_RESULT" == "OK" || "$CHG_RESULT" == "NOT_NEEDED" ]]; then
+      HT_PASS="${NEW_ADMIN_PASS}"
+      echo -e "${GREEN}  ✓ Senha admin trocada${NC}"
+    else
+      echo -e "${RED}  ERRO ao trocar senha: ${CHG_RESULT}${NC}"
+      rm -f "${GS_HELPER}"
+      exit 1
+    fi
+    # Re-login com nova senha
+    LOGIN_RESULT2=$(python3 "${GS_HELPER}" login "${HT_IP}" "${HT_PASS}" "${HT_FIRMWARE}")
+    if [[ "$LOGIN_RESULT2" == OK:* ]]; then
+      SID="${LOGIN_RESULT2#OK:}"
+      break
+    else
+      echo -e "${RED}ERRO: Login falhou apos troca de senha: ${LOGIN_RESULT2}${NC}"
+      rm -f "${GS_HELPER}"
+      exit 1
+    fi
   elif [[ "$LOGIN_RESULT" == "ERROR:locked" ]]; then
     echo -e "${RED}ERRO: HT802 bloqueado por excesso de tentativas de login.${NC}"
     echo -e "${YELLOW}Desliga o HT802 da tomada, espera 10 segundos, liga de novo e tenta de novo.${NC}"
@@ -335,9 +498,127 @@ done
 
 echo -e "${GREEN}✓ Login OK — firmware ${HT_FIRMWARE} (session: ${SID:0:8}...)${NC}"
 
+# --- Verifica e atualiza firmware ---
+echo ""
+echo "[2/7] Verificando versão do firmware..."
+
+FW_VERSION=$(python3 "${GS_HELPER}" version "${HT_IP}" "${SID}" "${HT_FIRMWARE}")
+
+if [[ "$FW_VERSION" == "OLD" ]]; then
+  echo -e "${YELLOW}  Firmware desatualizado — atualizando para versão mais recente...${NC}"
+
+  # Configurar firmware server via P-values
+  FW_PVALUES="P212=1&P192=firmware.grandstream.com"
+  CONFIG_RESULT=$(python3 "${GS_HELPER}" config "${HT_IP}" "${SID}" "${HT_FIRMWARE}" "${FW_PVALUES}")
+  if [[ "$CONFIG_RESULT" != "OK" && "$CONFIG_RESULT" != WARN:* ]]; then
+    echo -e "${RED}  ERRO ao configurar firmware server: ${CONFIG_RESULT}${NC}"
+    echo "  Pulando upgrade de firmware, continuando com configuração SIP..."
+  else
+    echo "  Firmware server configurado. Reiniciando para upgrade..."
+    python3 "${GS_HELPER}" reboot "${HT_IP}" "${SID}" "${HT_FIRMWARE}" 2>/dev/null || true
+
+    # Esperar upgrade: boot (~90s) + download + flash + reboot (~120s extra)
+    echo "  Aguardando upgrade (pode levar até 5 minutos)..."
+    echo "  O HT802 vai reiniciar, baixar o firmware e reiniciar de novo."
+
+    UPGRADE_OK=0
+    for i in $(seq 1 60); do
+      sleep 5
+      printf "  %3ds...\r" $((i * 5))
+      # Tentar conectar — se responder, o upgrade terminou
+      FW_CHECK=$(python3 "${GS_HELPER}" detect "${HT_IP}" 2>/dev/null)
+      if [[ "$FW_CHECK" == "v2" || "$FW_CHECK" == "legacy" ]]; then
+        # Verificar se firmware mudou
+        NEW_VER=$(python3 -c "
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.settimeout(5)
+try:
+    s.connect(('${HT_IP}', 80))
+    s.sendall(b'GET / HTTP/1.0\r\nHost: ${HT_IP}\r\n\r\n')
+    r = b''
+    while True:
+        try:
+            c = s.recv(4096)
+            if not c: break
+            r += c
+        except: break
+    t = r.decode('utf-8', errors='replace')
+    # Firmware novo tem Last-Modified de 2025
+    if '2025' in t or '2026' in t:
+        print('UPGRADED')
+    else:
+        print('SAME')
+except:
+    print('WAIT')
+finally:
+    s.close()
+" 2>/dev/null)
+        if [[ "$NEW_VER" == "UPGRADED" ]]; then
+          UPGRADE_OK=1
+          break
+        fi
+      fi
+    done
+    echo ""
+
+    if [[ $UPGRADE_OK -eq 1 ]]; then
+      echo -e "${GREEN}  ✓ Firmware atualizado com sucesso!${NC}"
+
+      # Re-detectar firmware (pode ter mudado de legacy para v2, ou vice-versa)
+      HT_FIRMWARE=$(python3 "${GS_HELPER}" detect "${HT_IP}")
+      echo "  Firmware apos upgrade: ${HT_FIRMWARE}"
+
+      # Firmware novo exige troca de senha admin
+      echo "  Trocando senha admin do firmware novo..."
+      NEW_ADMIN_PASS="Telefone1"
+      CHG_RESULT=$(python3 "${GS_HELPER}" change_password "${HT_IP}" "${HT_PASS}" "${NEW_ADMIN_PASS}" "${HT_FIRMWARE}")
+      if [[ "$CHG_RESULT" == "OK" ]]; then
+        HT_PASS="${NEW_ADMIN_PASS}"
+        echo -e "${GREEN}  ✓ Senha admin trocada: ${NEW_ADMIN_PASS}${NC}"
+      elif [[ "$CHG_RESULT" == "NOT_NEEDED" ]]; then
+        echo -e "${GREEN}  ✓ Troca de senha nao necessaria${NC}"
+      else
+        echo -e "${YELLOW}  Troca de senha retornou: ${CHG_RESULT} (continuando...)${NC}"
+      fi
+
+      # Re-login com a senha (nova ou original)
+      SID=""
+      LOGIN_RESULT=$(python3 "${GS_HELPER}" login "${HT_IP}" "${HT_PASS}" "${HT_FIRMWARE}")
+      if [[ "$LOGIN_RESULT" == OK:* ]]; then
+        SID="${LOGIN_RESULT#OK:}"
+        echo -e "${GREEN}  ✓ Re-login OK (session: ${SID:0:8}...)${NC}"
+      elif [[ "$LOGIN_RESULT" == CHANGE_PASSWORD:* ]]; then
+        # Ainda pede troca — tentar de novo com a senha gerada
+        CHG2=$(python3 "${GS_HELPER}" change_password "${HT_IP}" "${HT_PASS}" "${NEW_ADMIN_PASS}" "${HT_FIRMWARE}")
+        LOGIN2=$(python3 "${GS_HELPER}" login "${HT_IP}" "${NEW_ADMIN_PASS}" "${HT_FIRMWARE}")
+        if [[ "$LOGIN2" == OK:* ]]; then
+          SID="${LOGIN2#OK:}"
+          HT_PASS="${NEW_ADMIN_PASS}"
+          echo -e "${GREEN}  ✓ Re-login OK (session: ${SID:0:8}...)${NC}"
+        else
+          echo -e "${RED}  ERRO no re-login apos upgrade: ${LOGIN2}${NC}"
+          echo "  Tente rodar o script novamente."
+          rm -f "${GS_HELPER}"
+          exit 1
+        fi
+      else
+        echo -e "${RED}  ERRO no re-login apos upgrade: ${LOGIN_RESULT}${NC}"
+        echo "  Tente rodar o script novamente."
+        rm -f "${GS_HELPER}"
+        exit 1
+      fi
+    else
+      echo -e "${YELLOW}  Upgrade nao completou em 5 minutos. Continuando com firmware atual...${NC}"
+    fi
+  fi
+elif [[ "$FW_VERSION" == "RECENT" || "$FW_VERSION" == "UNKNOWN" ]]; then
+  echo -e "${GREEN}  ✓ Firmware atualizado${NC}"
+fi
+
 # --- Configura o HT802 ---
 echo ""
-echo "[2/6] Configurando HT802 (FXS PORT 1 = ramal ${RAMAL})..."
+echo "[3/7] Configurando HT802 (FXS PORT 1 = ramal ${RAMAL})..."
 
 # P-values para FXS PORT 1:
 # P271=1   Account Active = Yes
@@ -361,6 +642,7 @@ echo "[2/6] Configurando HT802 (FXS PORT 1 = ramal ${RAMAL})..."
 # P824=0   Line Echo Canceller = Enabled (0 = enabled, campo "Disable")
 # P4441=0  Network Echo Suppressor = Enabled
 # P291=1   Symmetric RTP = Yes
+# Volume controlado no Asterisk (VOLUME function no dialplan), nao no aparelho
 
 PVALUES="P271=1&P47=${VPS_IP}&P35=${RAMAL}&P36=${RAMAL}&P34=${SIP_PASS}&P3=${NOME}&P52=2&P130=1&P31=1&P32=2&P81=1&P57=9&P58=0&P59=8&P133=1&P132=1&P50=0&P824=0&P4441=0&P291=1"
 
@@ -378,7 +660,7 @@ fi
 
 # --- Verifica se ramal já existe no servidor ---
 echo ""
-echo "[3/6] Adicionando ramal ${RAMAL} no servidor Asterisk..."
+echo "[4/7] Adicionando ramal ${RAMAL} no servidor Asterisk..."
 
 if [[ ! -f "$SSH_KEY" ]]; then
   echo -e "${RED}ERRO: Chave SSH não encontrada em ${SSH_KEY}${NC}"
@@ -453,7 +735,7 @@ fi
 
 # --- Cria device no portal web ---
 echo ""
-echo "[4/6] Criando device no portal web..."
+echo "[5/7] Criando device no portal web..."
 
 # Verifica se device já existe no portal
 DEVICE_INFO=$(ssh -i "${SSH_KEY}" -o StrictHostKeyChecking=no ubuntu@${VPS_IP} "
@@ -545,7 +827,7 @@ fi
 
 # --- Reinicia o HT802 ---
 echo ""
-echo "[5/6] Reiniciando HT802..."
+echo "[6/7] Reiniciando HT802..."
 
 python3 "${GS_HELPER}" reboot "${HT_IP}" "${SID}" "${HT_FIRMWARE}" 2>/dev/null || true
 
@@ -562,7 +844,7 @@ fi
 
 # --- Aguarda registro SIP ---
 echo ""
-echo "[6/6] Aguardando ramal ${RAMAL} registrar no servidor..."
+echo "[7/7] Aguardando ramal ${RAMAL} registrar no servidor..."
 echo "      (timeout: ${WAIT_TIMEOUT} segundos)"
 
 REGISTERED=0

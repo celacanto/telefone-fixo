@@ -13,6 +13,8 @@ writeprotect = no
 ; -----------------------------------------------------------------------------
 [set-jitterbuffer]
 exten => s,1,Set(JITTERBUFFER(adaptive)=200,1000,40)
+ same => n,Set(VOLUME(TX)=4)
+ same => n,Set(VOLUME(RX)=4)
  same => n,Return()
 
 ; -----------------------------------------------------------------------------
@@ -23,6 +25,7 @@ exten => s,1,Set(JITTERBUFFER(adaptive)=200,1000,40)
 
 ; Ramal 100 — Hora certa em portugues (sempre disponivel, nao passa pelo AGI)
 exten => 100,1,Answer()
+ same => n,Set(VOLUME(TX)=4)
  same => n,Wait(1)
  same => n,AGI(hora_certa.py)
  same => n,Hangup()
